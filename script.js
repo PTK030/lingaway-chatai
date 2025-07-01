@@ -1,137 +1,270 @@
-import { InferenceClient } from "https://cdn.jsdelivr.net/npm/@huggingface/inference@4/+esm";
-const { Application, Controller } = Stimulus;
+import { HfInference } from "https://cdn.jsdelivr.net/npm/@huggingface/inference@2/+esm";
 
-class LanguageChatbotController extends Controller {
-  static targets = [
-    "messages",
-    "micButton",
-    "status",
-    "apiSetup",
-    "apiInput",
-    "loading",
-  ];
-
-  connect() {
+class LanguageChatbot {
+  constructor() {
     this.currentLanguage = "pl-PL";
     this.isRecording = false;
     this.isProcessing = false;
-
     this.apiKey = null;
-    this.model = "meta-llama/Meta-Llama-3.1-8B-Instruct";
+    this.apiProvider = "huggingface";
     this.hf = null;
-
-    // Wymagaj wprowadzenia klucza przed rozpoczęciem
-    this.apiSetupTarget.classList.add("show");
-    this.micButtonTarget.classList.add("disabled");
-    this.statusTarget.textContent = "Skonfiguruj API, aby rozpocząć";
-
-    if (this.apiKey) {
-      this.hfTranslationClient = new InferenceClient(this.apiKey);
-    }
+    this.currentFlashcardIndex = 0;
+    this.flashcardFlipped = false;
+    this.correctAnswers = 0;
 
     this.translationModels = {
-      "pl-PL": "Helsinki-NLP/opus-mt-pl-en", // polski -> angielski
-      "en-US": "Helsinki-NLP/opus-mt-en-pl", // angielski -> polski
+      "pl-PL": "Helsinki-NLP/opus-mt-pl-en",
+      "en-US": "Helsinki-NLP/opus-mt-en-pl",
       "es-ES": "Helsinki-NLP/opus-mt-es-en",
       "fr-FR": "Helsinki-NLP/opus-mt-fr-en",
       "de-DE": "Helsinki-NLP/opus-mt-de-en",
     };
 
-    if (
-      !("webkitSpeechRecognition" in window) &&
-      !("SpeechRecognition" in window)
-    ) {
-      this.addErrorMessage(
-        "Twoja przeglądarka nie obsługuje Web Speech API. Użyj Chrome lub Edge."
-      );
-      return;
-    }
-    if (!("speechSynthesis" in window)) {
-      this.addErrorMessage(
-        "Twoja przeglądarka nie obsługuje funkcji odczytu tekstu."
-      );
-      return;
-    }
-
-    this.initializeSpeechRecognition();
+    this.initElements();
+    this.initEvents();
+    this.checkSpeechSupport();
     this.loadVoices();
+    this.initializeSpeechRecognition();
+    this.showPanel("chat");
+    this.loadApiKey();
   }
 
-  async chatCompletion(userInput) {
-    const languageInstructions = {
-      "pl-PL":
-        "Odpowiadaj TYLKO po polsku. Jesteś pomocnym asystentem do nauki języka polskiego.",
-      "en-US":
-        "Respond ONLY in English. You are a helpful English language learning assistant.",
-      "es-ES":
-        "Responde SOLO en español. Eres un asistente útil para aprender español.",
-      "fr-FR":
-        "Réponds SEULEMENT en français. Tu es un assistant utile pour apprendre le français.",
-      "de-DE":
-        "Antworte NUR auf Deutsch. Du bist ein hilfreicher Assistent zum Deutschlernen.",
-    };
+  initElements() {
+    // Chat elements
+    this.messagesEl = document.getElementById("messages");
+    this.textInputEl = document.getElementById("text-input");
+    this.sendBtn = document.getElementById("send-btn");
+    this.micBtn = document.getElementById("mic-btn");
+    this.statusEl = document.getElementById("status");
+    this.clearChatBtn = document.getElementById("clear-chat");
+    this.loadingEl = document.getElementById("loading");
 
-    const systemPrompt = languageInstructions[this.currentLanguage];
-    const messages = [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userInput },
-    ];
+    // API setup elements
+    this.apiSetupEl = document.getElementById("api-setup");
+    this.apiProviderEl = document.getElementById("api-provider");
+    this.apiInputEl = document.getElementById("api-input");
+    this.apiSaveBtn = document.getElementById("api-save-btn");
+    this.apiInfoHfEl = document.getElementById("api-info-hf");
+    this.apiInfoOpenaiEl = document.getElementById("api-info-openai");
 
-    const response = await this.hf.chatCompletion({
-      model: this.model,
-      messages,
-      max_tokens: 256,
-      temperature: 0.7,
+    // Navigation tabs
+    this.tabChatBtn = document.getElementById("tab-chat");
+    this.tabFavoritesBtn = document.getElementById("tab-favorites");
+    this.tabFlashcardsBtn = document.getElementById("tab-flashcards");
+
+    // Panels
+    this.panelChat = document.getElementById("panel-chat");
+    this.panelFavorites = document.getElementById("panel-favorites");
+    this.panelFlashcards = document.getElementById("panel-flashcards");
+
+    // Favorites elements
+    this.favoritesList = document.getElementById("favorites-list");
+    this.favoritesSearchEl = document.getElementById("favorites-search");
+    this.exportFavoritesBtn = document.getElementById("export-favorites");
+    this.clearFavoritesBtn = document.getElementById("clear-favorites");
+
+    // Flashcards elements
+    this.flashcardEl = document.getElementById("flashcard");
+    this.flashcardEmptyEl = document.getElementById("flashcard-empty");
+    this.cardWordEl = document.getElementById("card-word");
+    this.cardTranslationEl = document.getElementById("card-translation");
+    this.cardActionsEl = document.getElementById("card-actions");
+    this.currentCardEl = document.getElementById("current-card");
+    this.totalCardsEl = document.getElementById("total-cards");
+    this.correctAnswersEl = document.getElementById("correct-answers");
+    this.knowItBtn = document.getElementById("know-it");
+    this.learningBtn = document.getElementById("learning");
+    this.dontKnowBtn = document.getElementById("dont-know");
+    this.shuffleBtn = document.getElementById("shuffle-flashcards");
+    this.resetProgressBtn = document.getElementById("reset-progress");
+    this.goToChatBtn = document.getElementById("go-to-chat");
+  }
+
+  initEvents() {
+    // Chat events
+    this.micBtn.addEventListener("click", () => this.toggleRecording());
+    this.sendBtn.addEventListener("click", () => this.sendTextMessage());
+    this.clearChatBtn.addEventListener("click", () => this.clearChat());
+
+    // Text input events
+    this.textInputEl.addEventListener("keypress", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        this.sendTextMessage();
+      }
     });
 
-    return response.choices[0].message.content.trim();
+    this.textInputEl.addEventListener("input", () => {
+      this.autoResizeTextarea();
+    });
+
+    // API setup events
+    this.apiSaveBtn.addEventListener("click", () => this.saveApiKey());
+    this.apiProviderEl.addEventListener("change", () => this.toggleApiInfo());
+    this.apiInputEl.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") {
+        this.saveApiKey();
+      }
+    });
+
+    // Navigation events
+    this.tabChatBtn.addEventListener("click", () => this.showPanel("chat"));
+    this.tabFavoritesBtn.addEventListener("click", () => this.showPanel("favorites"));
+    this.tabFlashcardsBtn.addEventListener("click", () => this.showPanel("flashcards"));
+
+    // Favorites events
+    this.favoritesSearchEl.addEventListener("input", () => this.filterFavorites());
+    this.exportFavoritesBtn.addEventListener("click", () => this.exportFavorites());
+    this.clearFavoritesBtn.addEventListener("click", () => this.clearAllFavorites());
+
+    // Flashcards events
+    this.flashcardEl.addEventListener("click", () => this.flipFlashcard());
+    this.knowItBtn.addEventListener("click", () => this.answerFlashcard("correct"));
+    this.learningBtn.addEventListener("click", () => this.answerFlashcard("learning"));
+    this.dontKnowBtn.addEventListener("click", () => this.answerFlashcard("wrong"));
+    this.shuffleBtn.addEventListener("click", () => this.shuffleFlashcards());
+    this.resetProgressBtn.addEventListener("click", () => this.resetFlashcardProgress());
+    this.goToChatBtn.addEventListener("click", () => this.showPanel("chat"));
+  }
+
+  loadApiKey() {
+    const savedKey = sessionStorage.getItem("api_key");
+    const savedProvider = sessionStorage.getItem("api_provider") || "huggingface";
+
+    if (savedKey) {
+      this.apiKey = savedKey;
+      this.apiProvider = savedProvider;
+      this.apiProviderEl.value = savedProvider;
+      this.apiSetupEl.classList.remove("show");
+      this.statusEl.textContent = "Kliknij mikrofon i zacznij mówić";
+      this.micBtn.classList.remove("disabled");
+
+      if (savedProvider === "huggingface") {
+        this.hf = new HfInference(savedKey);
+      }
+    }
+    this.toggleApiInfo();
   }
 
   saveApiKey() {
-    const apiKey = this.apiInputTarget.value.trim();
-    if (!apiKey) {
-      this.addErrorMessage("Proszę wprowadzić klucz API.");
+    const key = this.apiInputEl.value.trim();
+    const provider = this.apiProviderEl.value;
+
+    if (!key) {
+      this.showNotification("Wprowadź klucz API", "error");
       return;
     }
 
-    this.apiKey = apiKey;
-    this.hf = new InferenceClient(apiKey);
+    this.apiKey = key;
+    this.apiProvider = provider;
+    sessionStorage.setItem("api_key", key);
+    sessionStorage.setItem("api_provider", provider);
 
-    this.apiSetupTarget.classList.remove("show");
-    this.micButtonTarget.classList.remove("disabled");
-    this.statusTarget.textContent = "Kliknij mikrofon i zacznij mówić";
+    if (provider === "huggingface") {
+      this.hf = new HfInference(key);
+    }
 
-    this.addBotMessage(
-      "Świetnie! Klucz API został zapisany w pamięci. Możesz rozpocząć rozmowę."
-    );
+    this.apiSetupEl.classList.remove("show");
+    this.statusEl.textContent = "Kliknij mikrofon i zacznij mówić";
+    this.micBtn.classList.remove("disabled");
+    this.showNotification("Klucz API zapisany pomyślnie!", "success");
   }
 
-  async processUserInput(text) {
-    this.isProcessing = true;
-    this.statusTarget.textContent = "🧠 Myślę...";
-    this.statusTarget.classList.add("processing");
-    this.loadingTarget.classList.add("show");
+  toggleApiInfo() {
+    const provider = this.apiProviderEl.value;
+    if (provider === "huggingface") {
+      this.apiInfoHfEl.style.display = "block";
+      this.apiInfoOpenaiEl.style.display = "none";
+    } else {
+      this.apiInfoHfEl.style.display = "none";
+      this.apiInfoOpenaiEl.style.display = "block";
+    }
+  }
 
-    try {
-      const botReply = await this.chatCompletion(text);
-      this.addBotMessage(botReply);
-      this.speakText(botReply);
-    } catch (err) {
-      console.error(err);
-      this.addErrorMessage(
-        "Przepraszam, wystąpił błąd podczas przetwarzania Twojej wiadomości. Spróbuj ponownie."
-      );
-    } finally {
-      this.isProcessing = false;
-      this.statusTarget.classList.remove("processing");
-      this.statusTarget.textContent = "Kliknij mikrofon i zacznij mówić";
-      this.loadingTarget.classList.remove("show");
+  showPanel(panelName) {
+    // Hide all panels and deactivate all tabs
+    document.querySelectorAll(".panel").forEach(panel => {
+      panel.classList.remove("active");
+    });
+    document.querySelectorAll(".nav-tab").forEach(tab => {
+      tab.classList.remove("active");
+    });
+
+    // Show selected panel and activate corresponding tab
+    document.getElementById(`panel-${panelName}`).classList.add("active");
+    document.getElementById(`tab-${panelName}`).classList.add("active");
+
+    // Initialize specific panel functionality
+    if (panelName === "favorites") {
+      this.renderFavorites();
+    } else if (panelName === "flashcards") {
+      this.initFlashcards();
+    }
+  }
+
+  autoResizeTextarea() {
+    this.textInputEl.style.height = "auto";
+    this.textInputEl.style.height = Math.min(this.textInputEl.scrollHeight, 120) + "px";
+  }
+
+  sendTextMessage() {
+    const text = this.textInputEl.value.trim();
+    if (text.length === 0) return;
+
+    this.addUserMessage(text);
+    this.textInputEl.value = "";
+    this.autoResizeTextarea();
+    this.processUserInput(text);
+  }
+
+  clearChat() {
+    if (confirm("Czy na pewno chcesz wyczyścić całą rozmowę?")) {
+      this.messagesEl.innerHTML = "";
+    }
+  }
+
+  toggleRecording() {
+    if (!this.apiKey) {
+      this.showNotification("Najpierw skonfiguruj klucz API", "warning");
+      return;
+    }
+
+    if (this.isRecording) {
+      this.stopRecording();
+    } else {
+      this.startRecording();
+    }
+  }
+
+  startRecording() {
+    if (this.recognition) {
+      this.recognition.start();
+    }
+  }
+
+  stopRecording() {
+    this.isRecording = false;
+    this.micBtn.classList.remove("recording");
+    this.statusEl.textContent = "Kliknij mikrofon i zacznij mówić";
+    if (this.recognition) {
+      this.recognition.stop();
+    }
+  }
+
+  checkSpeechSupport() {
+    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
+      this.addErrorMessage("Twoja przeglądarka nie obsługuje Web Speech API. Użyj Chrome lub Edge.");
+      this.micBtn.disabled = true;
+    }
+    if (!("speechSynthesis" in window)) {
+      this.addErrorMessage("Twoja przeglądarka nie obsługuje funkcji odczytu tekstu.");
     }
   }
 
   initializeSpeechRecognition() {
-    const SpeechRecognition =
-      window.SpeechRecognition || window.webkitSpeechRecognition;
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
     this.recognition = new SpeechRecognition();
     this.recognition.continuous = false;
     this.recognition.interimResults = false;
@@ -139,9 +272,8 @@ class LanguageChatbotController extends Controller {
 
     this.recognition.onstart = () => {
       this.isRecording = true;
-      this.micButtonTarget.classList.add("recording");
-      this.statusTarget.textContent = "🎤 Słucham...";
-      this.statusTarget.classList.add("recording");
+      this.micBtn.classList.add("recording");
+      this.statusEl.textContent = "🎤 Słucham...";
     };
 
     this.recognition.onresult = (event) => {
@@ -153,132 +285,13 @@ class LanguageChatbotController extends Controller {
     this.recognition.onerror = (event) => {
       this.stopRecording();
       if (event.error === "not-allowed") {
-        this.addErrorMessage(
-          "Dostęp do mikrofonu został odrzucony. Sprawdź ustawienia przeglądarki."
-        );
+        this.addErrorMessage("Dostęp do mikrofonu został odrzucony. Sprawdź ustawienia przeglądarki.");
       } else {
         this.addErrorMessage(`Błąd rozpoznawania mowy: ${event.error}`);
       }
     };
 
     this.recognition.onend = () => this.stopRecording();
-  }
-
-  async fetchTranslation(word) {
-    if (!this.apiKey || !this.hf) {
-      // Brak klucza API lub klienta - zwróć słowo bez zmian
-      return word;
-    }
-
-    // Wybierz model na podstawie obecnego języka
-    const model =
-      this.translationModels[this.currentLanguage] ||
-      "Helsinki-NLP/opus-mt-pl-en";
-
-    try {
-      // Wywołanie API Hugging Face - model tłumaczenia
-      const response = await this.hf.textGeneration({
-        model,
-        inputs: word,
-        parameters: {
-          max_new_tokens: 60,
-          do_sample: false,
-          temperature: 0,
-        },
-      });
-
-      // Oczekujemy, że odpowiedź to tablica obiektów z generated_text
-      if (
-        Array.isArray(response) &&
-        response.length > 0 &&
-        response[0].generated_text
-      ) {
-        // Wygenerowany tekst może zawierać oryginalne słowo + tłumaczenie, więc wyciągamy tłumaczenie:
-        // Najprościej: usuń oryginalne słowo z początku i przytnij whitespace
-        let translated = response[0].generated_text;
-        if (translated.toLowerCase().startsWith(word.toLowerCase())) {
-          translated = translated.slice(word.length).trim();
-        }
-        return translated || word;
-      }
-
-      return word;
-    } catch (error) {
-      console.error("Błąd tłumaczenia:", error);
-      return word; // na wypadek błędu zwracamy oryginał
-    }
-  }
-
-  async fetchTranslation(word) {
-    if (!this.apiKey || !this.hf) {
-      // Brak klucza API lub klienta - zwróć słowo bez zmian
-      return word;
-    }
-
-    // Wybierz model na podstawie obecnego języka
-    const model =
-      this.translationModels[this.currentLanguage] ||
-      "Helsinki-NLP/opus-mt-pl-en";
-
-    try {
-      // Wywołanie API Hugging Face - model tłumaczenia
-      const response = await this.hf.textGeneration({
-        model,
-        inputs: word,
-        parameters: {
-          max_new_tokens: 60,
-          do_sample: false,
-          temperature: 0,
-        },
-      });
-
-      // Oczekujemy, że odpowiedź to tablica obiektów z generated_text
-      if (
-        Array.isArray(response) &&
-        response.length > 0 &&
-        response[0].generated_text
-      ) {
-        // Wygenerowany tekst może zawierać oryginalne słowo + tłumaczenie, więc wyciągamy tłumaczenie:
-        // Najprościej: usuń oryginalne słowo z początku i przytnij whitespace
-        let translated = response[0].generated_text;
-        if (translated.toLowerCase().startsWith(word.toLowerCase())) {
-          translated = translated.slice(word.length).trim();
-        }
-        return translated || word;
-      }
-
-      return word;
-    } catch (error) {
-      console.error("Błąd tłumaczenia:", error);
-      return word; // na wypadek błędu zwracamy oryginał
-    }
-  }
-
-  toggleRecording() {
-    if (!this.apiKey) {
-      this.addErrorMessage("Najpierw skonfiguruj klucz API.");
-      return;
-    }
-    if (this.isProcessing) return;
-
-    if (this.isRecording) {
-      this.recognition.stop();
-    } else {
-      try {
-        this.recognition.start();
-      } catch (e) {
-        this.addErrorMessage(
-          "Nie można rozpocząć nagrywania. Spróbuj ponownie."
-        );
-      }
-    }
-  }
-
-  stopRecording() {
-    this.isRecording = false;
-    this.micButtonTarget.classList.remove("recording");
-    this.statusTarget.classList.remove("recording");
-    this.statusTarget.textContent = "Kliknij mikrofon i zacznij mówić";
   }
 
   loadVoices() {
@@ -293,13 +306,11 @@ class LanguageChatbotController extends Controller {
   speakText(text) {
     if (!("speechSynthesis" in window)) return;
 
-    this.statusTarget.textContent = "🔊 Mówię...";
-    this.statusTarget.classList.add("speaking");
+    speechSynthesis.cancel();
+    this.statusEl.textContent = "🔊 Mówię...";
 
     const utterance = new SpeechSynthesisUtterance(text);
-    const voice = this.voices.find((v) =>
-      v.lang.startsWith(this.currentLanguage.split("-")[0])
-    );
+    const voice = this.voices.find(v => v.lang.startsWith(this.currentLanguage.split("-")[0]));
     if (voice) utterance.voice = voice;
 
     utterance.lang = this.currentLanguage;
@@ -307,210 +318,425 @@ class LanguageChatbotController extends Controller {
     utterance.pitch = 1;
 
     utterance.onend = () => {
-      this.statusTarget.classList.remove("speaking");
-      this.statusTarget.textContent = "Kliknij mikrofon i zacznij mówić";
+      this.statusEl.textContent = "Kliknij mikrofon i zacznij mówić";
+    };
+
+    utterance.onerror = () => {
+      this.statusEl.textContent = "Błąd podczas odtwarzania mowy";
     };
 
     speechSynthesis.speak(utterance);
   }
 
-  setLanguage(event) {
-    const selectedBtn = event.currentTarget;
-    const lang = selectedBtn.dataset.lang;
+  async processUserInput(text) {
+    if (this.isProcessing) return;
 
-    this.currentLanguage = lang;
+    this.isProcessing = true;
+    this.showLoading(true);
 
-    // Ustaw język w rozpoznawaniu mowy, jeśli już zainicjalizowane
-    if (this.recognition) {
-      this.recognition.lang = this.currentLanguage;
+    try {
+      let response;
+      if (this.apiProvider === "huggingface") {
+        response = await this.processWithHuggingFace(text);
+      } else {
+        response = await this.processWithOpenAI(text);
+      }
+
+      this.addBotMessage(response);
+      this.speakText(response);
+    } catch (error) {
+      console.error("Error processing input:", error);
+      this.addErrorMessage("Wystąpił błąd podczas przetwarzania. Spróbuj ponownie.");
+    } finally {
+      this.isProcessing = false;
+      this.showLoading(false);
+    }
+  }
+
+  async processWithHuggingFace(text) {
+    const prompt = `Jesteś pomocnym asystentem językowym. Odpowiadaj w języku polskim, naturalnie i przyjaznym tonem. Użytkownik powiedział: "${text}"`;
+
+    const response = await this.hf.textGeneration({
+      model: "microsoft/DialoGPT-medium",
+      inputs: prompt,
+      parameters: {
+        max_new_tokens: 100,
+        temperature: 0.7,
+        return_full_text: false
+      }
+    });
+
+    return response.generated_text || "Przepraszam, nie mogę teraz odpowiedzieć. Spróbuj ponownie.";
+  }
+
+  async processWithOpenAI(text) {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({
+        model: "gpt-3.5-turbo",
+        messages: [
+          {
+            role: "system",
+            content: "Jesteś pomocnym asystentem językowym. Odpowiadaj w języku polskim, naturalnie i przyjaznym tonem."
+          },
+          {
+            role: "user",
+            content: text
+          }
+        ],
+        max_tokens: 150,
+        temperature: 0.7
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      throw new Error(data.error?.message || "Błąd API OpenAI");
     }
 
-    // Zaktualizuj styl aktywnego przycisku
-    const buttons = selectedBtn.parentElement.querySelectorAll(".language-btn");
-    buttons.forEach((btn) => btn.classList.remove("active"));
-    selectedBtn.classList.add("active");
+    return data.choices[0].message.content;
+  }
 
-    // Komunikat informujący o zmianie języka
-    const messages = {
-      "pl-PL": "✅ Język został zmieniony na: polski.",
-      "en-US": "✅ Language switched to: English.",
-      "es-ES": "✅ Idioma cambiado a: español.",
-      "fr-FR": "✅ Langue changée en : français.",
-      "de-DE": "✅ Sprache wurde geändert zu: Deutsch.",
-    };
+  async translateWord(word) {
+    try {
+      const model = this.translationModels[this.currentLanguage];
+      if (!model) return "Nie można przetłumaczyć";
 
-    this.addBotMessage(messages[lang] || "✅ Zmieniono język.");
+      if (this.apiProvider === "huggingface" && this.hf) {
+        const result = await this.hf.translation({
+          model: model,
+          inputs: word
+        });
+        return result.translation_text || word;
+      } else {
+        // Fallback for OpenAI or if translation fails
+        return `[tłumaczenie: ${word}]`;
+      }
+    } catch (error) {
+      console.error("Translation error:", error);
+      return word;
+    }
+  }
+
+  showLoading(show) {
+    this.loadingEl.style.display = show ? "flex" : "none";
   }
 
   addUserMessage(text) {
-    const msg = this.createMessageElement("user", text);
-    this.messagesTarget.appendChild(msg);
-    this.scrollToBottom();
-  }
-
-  onWordClick(event, word) {
-    event.stopPropagation();
-
-    // Usuń istniejący popup jeśli jest
-    const existingPopup = this.element.querySelector(".word-popup");
-    if (existingPopup) existingPopup.remove();
-
-    // Tworzymy popup z tłumaczeniem i gwiazdką
-    const popup = document.createElement("div");
-    popup.className = "word-popup";
-    popup.style.position = "absolute";
-    popup.style.background = "#fff";
-    popup.style.border = "1px solid #ccc";
-    popup.style.padding = "8px";
-    popup.style.borderRadius = "5px";
-    popup.style.boxShadow = "0 2px 6px rgba(0,0,0,0.2)";
-    popup.style.zIndex = 1000;
-    popup.style.minWidth = "150px";
-
-    // Tłumaczenie (można tu podpiąć API tłumaczenia)
-    const translationText = document.createElement("div");
-    translationText.textContent = "Tłumaczenie: ..."; // Później uzupełnimy
-
-    // Gwiazdka do zaznaczenia ulubionego
-    const starBtn = document.createElement("button");
-    starBtn.textContent = this.isStarred(word) ? "★" : "☆";
-    starBtn.style.fontSize = "20px";
-    starBtn.style.border = "none";
-    starBtn.style.background = "transparent";
-    starBtn.style.cursor = "pointer";
-    starBtn.title = "Dodaj do ulubionych";
-
-    starBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this.toggleStar(word);
-      starBtn.textContent = this.isStarred(word) ? "★" : "☆";
-    });
-
-    popup.appendChild(translationText);
-    popup.appendChild(starBtn);
-
-    this.element.appendChild(popup);
-
-    // Pozycjonowanie popupu pod klikniętym słowem
-    const rect = event.target.getBoundingClientRect();
-    const containerRect = this.element.getBoundingClientRect();
-
-    popup.style.top = `${
-      rect.bottom - containerRect.top + window.scrollY + 5
-    }px`;
-    popup.style.left = `${rect.left - containerRect.left + window.scrollX}px`;
-
-    // Pobierz tłumaczenie słowa
-    this.fetchTranslation(word).then((trans) => {
-      translationText.textContent = `Tłumaczenie: ${trans}`;
-    });
-
-    // Zamknij popup po kliknięciu poza popupem
-    const onClickOutside = (ev) => {
-      if (!popup.contains(ev.target)) {
-        popup.remove();
-        document.removeEventListener("click", onClickOutside);
-      }
-    };
-    document.addEventListener("click", onClickOutside);
-  }
-
-  getStarredWords() {
-    const data = localStorage.getItem("starredWords");
-    return data ? JSON.parse(data) : [];
-  }
-
-  isStarred(word) {
-    const starred = this.getStarredWords();
-    return starred.includes(word.toLowerCase());
-  }
-
-  toggleStar(word) {
-    let starred = this.getStarredWords();
-    const wordLower = word.toLowerCase();
-
-    if (starred.includes(wordLower)) {
-      starred = starred.filter((w) => w !== wordLower);
-    } else {
-      starred.push(wordLower);
-    }
-
-    localStorage.setItem("starredWords", JSON.stringify(starred));
-  }
-
-  async fetchTranslation(word) {
-    // TODO: podpiąć API tłumaczenia, np. Hugging Face Translation lub inne
+    const div = document.createElement("div");
+    div.className = "message user-message";
+    div.textContent = text;
+    this.messagesEl.appendChild(div);
+    this.scrollMessages();
   }
 
   addBotMessage(text) {
-    const msg = document.createElement("div");
-    msg.className = "message bot";
+    this.removeTranslationPopup();
 
-    const avatar = document.createElement("div");
-    avatar.className = "avatar";
-    avatar.textContent = "🤖";
+    const div = document.createElement("div");
+    div.className = "message bot-message";
 
-    const content = document.createElement("div");
-    content.className = "message-content";
-
-    // Podziel tekst na słowa i renderuj je jako klikane spany
-    const words = text.split(/(\s+)/); // zachowujemy spacje
-    words.forEach((word) => {
+    const words = text.split(/(\s+)/);
+    words.forEach(word => {
       if (word.trim().length === 0) {
-        content.appendChild(document.createTextNode(word));
+        div.appendChild(document.createTextNode(word));
         return;
       }
-
       const span = document.createElement("span");
-      span.className = "translatable-word";
+      span.className = "clickable-word";
       span.textContent = word;
-      span.style.cursor = "pointer";
-      span.addEventListener("click", (e) => this.onWordClick(e, word));
-      content.appendChild(span);
+      span.addEventListener("click", e => this.onWordClick(e, word.trim()));
+      div.appendChild(span);
     });
 
-    msg.appendChild(avatar);
-    msg.appendChild(content);
-
-    this.messagesTarget.appendChild(msg);
-    this.scrollToBottom();
+    this.messagesEl.appendChild(div);
+    this.scrollMessages();
   }
 
   addErrorMessage(text) {
-    const errorBox = document.createElement("div");
-    errorBox.className = "error";
-    errorBox.textContent = text;
-    this.messagesTarget.appendChild(errorBox);
-    this.scrollToBottom();
+    const div = document.createElement("div");
+    div.className = "message error-message";
+    div.textContent = text;
+    this.messagesEl.appendChild(div);
+    this.scrollMessages();
   }
 
-  createMessageElement(role, text) {
-    const message = document.createElement("div");
-    message.className = `message ${role}`;
-
-    const avatar = document.createElement("div");
-    avatar.className = "avatar";
-    avatar.textContent = role === "user" ? "🧑" : "🤖";
-
-    const content = document.createElement("div");
-    content.className = "message-content";
-    content.textContent = text;
-
-    message.appendChild(avatar);
-    message.appendChild(content);
-
-    return message;
+  scrollMessages() {
+    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
 
-  scrollToBottom() {
-    this.messagesTarget.scrollTop = this.messagesTarget.scrollHeight;
+  removeTranslationPopup() {
+    const popup = document.querySelector(".translation-popup");
+    if (popup) popup.remove();
   }
 
-  clearChat() {
-    this.messagesTarget.innerHTML = "";
-    this.addBotMessage("🧹 Czatu wyczyszczony. Możesz zacząć od nowa.");
+  async onWordClick(event, word) {
+    event.stopPropagation();
+    this.removeTranslationPopup();
+
+    const cleanWord = word.replace(/[.,!?;:"'()]/g, "");
+    if (cleanWord.length === 0) return;
+
+    const popup = document.createElement("div");
+    popup.className = "translation-popup";
+    popup.style.top = `${event.clientY + 10}px`;
+    popup.style.left = `${event.clientX + 10}px`;
+    popup.textContent = "Tłumaczę...";
+
+    document.body.appendChild(popup);
+
+    const translation = await this.translateWord(cleanWord);
+
+    popup.innerHTML = `<strong>${cleanWord}</strong> — ${translation}`;
+
+    const starBtn = document.createElement("button");
+    starBtn.className = "star-btn";
+    starBtn.textContent = "★ Dodaj do ulubionych";
+    starBtn.addEventListener("click", () => {
+      this.addToFavorites(cleanWord, translation);
+      popup.remove();
+    });
+    popup.appendChild(document.createElement("br"));
+    popup.appendChild(starBtn);
+
+    const closePopup = (e) => {
+      if (!popup.contains(e.target)) {
+        popup.remove();
+        document.removeEventListener("click", closePopup);
+      }
+    };
+    setTimeout(() => {
+      document.addEventListener("click", closePopup);
+    }, 100);
+  }
+
+  getFavorites() {
+    const fav = sessionStorage.getItem("favorites");
+    return fav ? JSON.parse(fav) : [];
+  }
+
+  saveFavorites(favs) {
+    sessionStorage.setItem("favorites", JSON.stringify(favs));
+  }
+
+  addToFavorites(word, translation) {
+    let favs = this.getFavorites();
+    if (favs.find(f => f.word.toLowerCase() === word.toLowerCase())) {
+      this.showNotification("To słówko jest już w ulubionych.", "warning");
+      return;
+    }
+    favs.push({ word, translation, date: new Date().toISOString() });
+    this.saveFavorites(favs);
+    this.renderFavorites();
+    this.showNotification(`Dodano "${word}" do ulubionych!`, "success");
+  }
+
+  removeFromFavorites(word) {
+    let favs = this.getFavorites();
+    favs = favs.filter(f => f.word.toLowerCase() !== word.toLowerCase());
+    this.saveFavorites(favs);
+    this.renderFavorites();
+    this.updateFlashcardStats();
+  }
+
+  renderFavorites() {
+    const favs = this.getFavorites();
+    const searchTerm = this.favoritesSearchEl.value.toLowerCase();
+    const filteredFavs = favs.filter(fav =>
+        fav.word.toLowerCase().includes(searchTerm) ||
+        fav.translation.toLowerCase().includes(searchTerm)
+    );
+
+    this.favoritesList.innerHTML = "";
+
+    if (filteredFavs.length === 0) {
+      const emptyState = document.createElement("div");
+      emptyState.className = "empty-state";
+      emptyState.innerHTML = `
+        <div class="empty-icon">⭐</div>
+        <h3>${favs.length === 0 ? "Brak ulubionych słówek" : "Brak wyników wyszukiwania"}</h3>
+        <p>${favs.length === 0 ? "Kliknij na słowo w rozmowie, aby je dodać." : "Spróbuj innego wyszukiwania."}</p>
+      `;
+      this.favoritesList.appendChild(emptyState);
+      return;
+    }
+
+    filteredFavs.forEach(({ word, translation }) => {
+      const div = document.createElement("div");
+      div.className = "favorite-word";
+
+      const contentDiv = document.createElement("div");
+      contentDiv.className = "favorite-word-content";
+      contentDiv.textContent = `${word} — ${translation}`;
+
+      const removeBtn = document.createElement("button");
+      removeBtn.className = "remove-favorite-btn";
+      removeBtn.textContent = "Usuń";
+      removeBtn.addEventListener("click", () => this.removeFromFavorites(word));
+
+      div.appendChild(contentDiv);
+      div.appendChild(removeBtn);
+      this.favoritesList.appendChild(div);
+    });
+  }
+
+  filterFavorites() {
+    this.renderFavorites();
+  }
+
+  exportFavorites() {
+    const favs = this.getFavorites();
+    if (favs.length === 0) {
+      this.showNotification("Brak słówek do eksportu.", "warning");
+      return;
+    }
+
+    const csvContent = "data:text/csv;charset=utf-8," +
+        "Słowo,Tłumaczenie,Data\n" +
+        favs.map(f => `"${f.word}","${f.translation}","${new Date(f.date).toLocaleDateString()}"`).join("\n");
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `ulubione_slowka_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
+
+  clearAllFavorites() {
+    if (confirm("Czy na pewno chcesz usunąć wszystkie ulubione słówka?")) {
+      sessionStorage.removeItem("favorites");
+      this.renderFavorites();
+      this.updateFlashcardStats();
+      this.showNotification("Wszystkie ulubione słówka zostały usunięte.", "success");
+    }
+  }
+
+  // Flashcards functionality
+  initFlashcards() {
+    const favs = this.getFavorites();
+    if (favs.length === 0) {
+      this.flashcardEmptyEl.style.display = "block";
+      this.flashcardEl.style.display = "none";
+      this.cardActionsEl.style.display = "none";
+    } else {
+      this.flashcardEmptyEl.style.display = "none";
+      this.flashcardEl.style.display = "block";
+      this.currentFlashcardIndex = 0;
+      this.showCurrentFlashcard();
+    }
+    this.updateFlashcardStats();
+  }
+
+  showCurrentFlashcard() {
+    const favs = this.getFavorites();
+    if (favs.length === 0) return;
+
+    const current = favs[this.currentFlashcardIndex];
+    this.cardWordEl.textContent = current.word;
+    this.cardTranslationEl.textContent = current.translation;
+
+    this.flashcardFlipped = false;
+    this.flashcardEl.classList.remove("flipped");
+    this.cardActionsEl.style.display = "none";
+  }
+
+  flipFlashcard() {
+    if (this.getFavorites().length === 0) return;
+
+    this.flashcardFlipped = !this.flashcardFlipped;
+    this.flashcardEl.classList.toggle("flipped");
+
+    if (this.flashcardFlipped) {
+      this.cardActionsEl.style.display = "flex";
+    }
+  }
+
+  answerFlashcard(result) {
+    if (result === "correct") {
+      this.correctAnswers++;
+    }
+
+    this.nextFlashcard();
+    this.updateFlashcardStats();
+  }
+
+  nextFlashcard() {
+    const favs = this.getFavorites();
+    if (favs.length === 0) return;
+
+    this.currentFlashcardIndex = (this.currentFlashcardIndex + 1) % favs.length;
+    this.showCurrentFlashcard();
+  }
+
+  shuffleFlashcards() {
+    const favs = this.getFavorites();
+    if (favs.length <= 1) return;
+
+    // Fisher-Yates shuffle algorithm
+    for (let i = favs.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [favs[i], favs[j]] = [favs[j], favs[i]];
+    }
+
+    this.saveFavorites(favs);
+    this.currentFlashcardIndex = 0;
+    this.showCurrentFlashcard();
+    this.showNotification("Fiszki zostały przetasowane!", "success");
+  }
+
+  resetFlashcardProgress() {
+    if (confirm("Czy na pewno chcesz zresetować postęp nauki?")) {
+      this.correctAnswers = 0;
+      this.currentFlashcardIndex = 0;
+      this.showCurrentFlashcard();
+      this.updateFlashcardStats();
+      this.showNotification("Postęp został zresetowany.", "success");
+    }
+  }
+
+  updateFlashcardStats() {
+    const favs = this.getFavorites();
+    this.currentCardEl.textContent = favs.length > 0 ? this.currentFlashcardIndex + 1 : 0;
+    this.totalCardsEl.textContent = favs.length;
+    this.correctAnswersEl.textContent = this.correctAnswers;
+  }
+
+  showNotification(message, type = "info") {
+    // Remove existing notifications
+    const existingNotifications = document.querySelectorAll(".notification");
+    existingNotifications.forEach(n => n.remove());
+
+    const notification = document.createElement("div");
+    notification.className = `notification notification-${type}`;
+    notification.textContent = message;
+
+    document.body.appendChild(notification);
+
+    // Show notification
+    setTimeout(() => {
+      notification.classList.add("show");
+    }, 100);
+
+    // Hide notification after 3 seconds
+    setTimeout(() => {
+      notification.classList.remove("show");
+      setTimeout(() => {
+        if (notification.parentNode) {
+          notification.remove();
+        }
+      }, 300);
+    }, 3000);
   }
 }
 
-const app = Application.start();
-app.register("language-chatbot", LanguageChatbotController);
+// Initialize the chatbot when the page loads
+document.addEventListener("DOMContentLoaded", () => {
+  new LanguageChatbot();
+});

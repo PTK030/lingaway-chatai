@@ -1,130 +1,194 @@
 <!DOCTYPE html>
 <html lang="pl">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Chatbot do Nauki Języków</title>
-    <script src="https://unpkg.com/@hotwired/stimulus@3.2.2/dist/stimulus.umd.js"></script>
-    <link rel="stylesheet" href="style.css">
-  </head>
-  <body>
-    <div class="chat-container" data-controller="language-chatbot">
-      <!-- Header -->
-      <div class="header">
-        <h1>🗣️ Chatbot do Nauki Języków</h1>
-        <p>Rozmawiaj z AI w wybranym języku!</p>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Language Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="navbar">
+  <div class="nav-brand">
+    <span class="brand-icon">🗣️</span>
+    <span class="brand-text">Language Assistant</span>
+  </div>
+  <div class="nav-tabs">
+    <button id="tab-chat" class="nav-tab active">
+      <span class="tab-icon">💬</span>
+      <span class="tab-text">Czat</span>
+    </button>
+    <button id="tab-favorites" class="nav-tab">
+      <span class="tab-icon">⭐</span>
+      <span class="tab-text">Ulubione</span>
+    </button>
+    <button id="tab-flashcards" class="nav-tab">
+      <span class="tab-icon">🃏</span>
+      <span class="tab-text">Fiszki</span>
+    </button>
+  </div>
+</nav>
 
-        <div class="language-selector">
-          <button
-            class="language-btn active"
-            data-action="click->language-chatbot#setLanguage"
-            data-lang="pl-PL"
-          >
-            🇵🇱 Polski
+<main class="main-content">
+  <!-- Panel Czatu -->
+  <section id="panel-chat" class="panel panel-chat active" aria-label="Panel czatu">
+    <div class="chat-header">
+      <h2>Rozmowa</h2>
+      <div class="chat-controls">
+        <button id="clear-chat" class="btn btn-secondary">Wyczyść czat</button>
+      </div>
+    </div>
+
+    <div id="messages" class="messages" aria-live="polite"></div>
+
+    <div class="input-area">
+      <div class="input-controls">
+        <div class="text-input-container">
+          <textarea id="text-input" placeholder="Wpisz wiadomość lub użyj mikrofonu..." rows="1"></textarea>
+          <button id="send-btn" class="btn btn-primary">
+            <span class="btn-icon">📤</span>
           </button>
-          <button
-            class="language-btn"
-            data-action="click->language-chatbot#setLanguage"
-            data-lang="en-US"
-          >
-            🇺🇸 English
+        </div>
+        <div class="voice-controls">
+          <button id="mic-btn" class="mic-btn disabled" aria-label="Rozpocznij nagrywanie">
+            <span class="mic-icon">🎤</span>
           </button>
-          <button
-            class="language-btn"
-            data-action="click->language-chatbot#setLanguage"
-            data-lang="es-ES"
-          >
-            🇪🇸 Español
-          </button>
-          <button
-            class="language-btn"
-            data-action="click->language-chatbot#setLanguage"
-            data-lang="fr-FR"
-          >
-            🇫🇷 Français
-          </button>
-          <button
-            class="language-btn"
-            data-action="click->language-chatbot#setLanguage"
-            data-lang="de-DE"
-          >
-            🇩🇪 Deutsch
-          </button>
+          <div id="status" class="status">Skonfiguruj API, aby rozpocząć</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="loading" class="loading">
+      <div class="loading-spinner"></div>
+      <span>Ładowanie...</span>
+    </div>
+
+    <div id="api-setup" class="api-setup show">
+      <div class="api-setup-header">
+        <h3>Konfiguracja API</h3>
+        <p>Wybierz dostawcę API i wprowadź klucz</p>
+      </div>
+
+      <div class="api-provider-selection" style="margin-bottom: 1.5rem;">
+        <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Dostawca API:</label>
+        <select id="api-provider" style="width: 100%; padding: 0.75rem; border: 1px solid var(--gray-300); border-radius: var(--radius); background: var(--white);">
+          <option value="huggingface">Hugging Face (darmowy)</option>
+          <option value="openai">OpenAI (płatny)</option>
+        </select>
+      </div>
+
+      <div class="api-input-group">
+        <input id="api-input" type="password" placeholder="Wklej tutaj swój klucz API..." aria-label="Klucz API" />
+        <button id="api-save-btn" class="btn btn-primary">Zapisz</button>
+      </div>
+
+      <div id="api-info-hf" class="api-info">
+        <p>📝 Jak uzyskać klucz Hugging Face API:</p>
+        <ol>
+          <li>Przejdź na <a href="https://huggingface.co/settings/tokens" target="_blank">huggingface.co/settings/tokens</a></li>
+          <li>Zaloguj się lub załóż darmowe konto</li>
+          <li>Kliknij "New token" i wybierz "Read"</li>
+          <li>Skopiuj wygenerowany klucz</li>
+        </ol>
+      </div>
+
+      <div id="api-info-openai" class="api-info" style="display: none;">
+        <p>📝 Jak uzyskać klucz OpenAI API:</p>
+        <ol>
+          <li>Przejdź na <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com/api-keys</a></li>
+          <li>Zaloguj się do swojego konta OpenAI</li>
+          <li>Kliknij "Create new secret key"</li>
+          <li>Skopiuj wygenerowany klucz (zachowaj go bezpiecznie!)</li>
+        </ol>
+        <p style="color: var(--warning-color); font-size: 0.8rem; margin-top: 1rem;">⚠️ OpenAI API jest płatne. Sprawdź cennik przed użyciem.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Panel Ulubionych -->
+  <section id="panel-favorites" class="panel panel-favorites" aria-label="Ulubione słówka">
+    <div class="panel-header">
+      <h2>Ulubione słówka</h2>
+      <div class="panel-controls">
+        <button id="export-favorites" class="btn btn-secondary">Eksportuj</button>
+        <button id="clear-favorites" class="btn btn-danger">Wyczyść wszystkie</button>
+      </div>
+    </div>
+    <div class="search-container">
+      <input id="favorites-search" type="text" placeholder="Szukaj w ulubionych..." class="search-input">
+    </div>
+    <div id="favorites-list" class="favorites-list">
+      <div class="empty-state">
+        <div class="empty-icon">⭐</div>
+        <h3>Brak ulubionych słówek</h3>
+        <p>Kliknij na dowolne słowo w rozmowie, aby dodać je do ulubionych.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Panel Fiszek -->
+  <section id="panel-flashcards" class="panel panel-flashcards" aria-label="Fiszki do nauki">
+    <div class="panel-header">
+      <h2>Fiszki</h2>
+      <div class="panel-controls">
+        <button id="shuffle-flashcards" class="btn btn-secondary">Tasuj</button>
+        <button id="reset-progress" class="btn btn-warning">Reset postępu</button>
+      </div>
+    </div>
+
+    <div class="flashcard-container">
+      <div class="flashcard-stats">
+        <div class="stat">
+          <span class="stat-label">Aktualna</span>
+          <span id="current-card" class="stat-value">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Wszystkich</span>
+          <span id="total-cards" class="stat-value">0</span>
+        </div>
+        <div class="stat">
+          <span class="stat-label">Poprawne</span>
+          <span id="correct-answers" class="stat-value">0</span>
         </div>
       </div>
 
-      <!-- API Setup -->
-      <div class="api-setup" data-language-chatbot-target="apiSetup">
-        <h3>🔑 Konfiguracja API</h3>
-        <p>
-          Aby korzystać z chatbota, potrzebujesz darmowego klucza API z Hugging
-          Face:
-        </p>
-        <ol>
-          <li>
-            Idź na
-            <a href="https://huggingface.co/join" target="_blank"
-              >huggingface.co</a
-            >
-            i załóż darmowe konto
-          </li>
-          <li>
-            Przejdź do
-            <a href="https://huggingface.co/settings/tokens" target="_blank"
-              >Settings → Access Tokens</a
-            >
-          </li>
-          <li>Utwórz nowy token i skopiuj go poniżej:</li>
-        </ol>
-        <input
-          type="password"
-          placeholder="Wklej swój Hugging Face API token..."
-          data-language-chatbot-target="apiInput"
-        />
-        <button data-action="click->language-chatbot#saveApiKey">
-          Zapisz klucz API
-        </button>
-      </div>
+      <div id="flashcard-content">
+        <div id="flashcard-empty" class="flashcard-empty">
+          <div class="empty-icon">🃏</div>
+          <h3>Brak fiszek</h3>
+          <p>Dodaj słówka do ulubionych, aby móc się ich uczyć za pomocą fiszek.</p>
+          <button id="go-to-chat" class="btn btn-primary">Przejdź do czatu</button>
+        </div>
 
-      <!-- Chat Messages -->
-      <div class="chat-messages" data-language-chatbot-target="messages">
-        <div class="message bot">
-          <div class="avatar">🤖</div>
-          <div class="message-content">
-            Cześć! Jestem Twoim asystentem do nauki języków. Wybierz język i
-            zacznij rozmawiać ze mną! Pamiętaj, że potrzebujesz mikrofonu i
-            klucza API Hugging Face.
+        <div id="flashcard" class="flashcard" style="display: none;">
+          <div class="flashcard-inner">
+            <div class="flashcard-front">
+              <div class="card-content">
+                <div id="card-word" class="card-word"></div>
+                <div class="card-hint">Kliknij, aby zobaczyć tłumaczenie</div>
+              </div>
+            </div>
+            <div class="flashcard-back">
+              <div class="card-content">
+                <div id="card-translation" class="card-translation"></div>
+                <div class="card-hint">Jak dobrze znasz to słowo?</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- Loading indicator -->
-      <div class="loading" data-language-chatbot-target="loading">
-        <div class="spinner"></div>
-        <p>Przetwarzam odpowiedź...</p>
-      </div>
-
-      <!-- Controls -->
-      <div class="controls">
-        <button
-          class="mic-button disabled"
-          data-language-chatbot-target="micButton"
-          data-action="click->language-chatbot#toggleRecording"
-        >
-          🎤
-        </button>
-        <div class="status" data-language-chatbot-target="status">
-          Skonfiguruj API, aby rozpocząć
-        </div>
-        <button
-          class="clear-button"
-          data-action="click->language-chatbot#clearChat"
-        >
-          🗑️ Wyczyść
-        </button>
+      <div id="card-actions" class="card-actions" style="display: none;">
+        <button id="know-it" class="btn btn-success">Znam dobrze</button>
+        <button id="learning" class="btn btn-warning">Uczę się</button>
+        <button id="dont-know" class="btn btn-danger">Nie znam</button>
       </div>
     </div>
+  </section>
+</main>
 
-    <script src="script.js" type="module"></script>
-  </body>
+<script type="module" src="script.js"></script>
+</body>
 </html>
