@@ -25,6 +25,18 @@ class LanguageChatbotController extends Controller {
     this.micButtonTarget.classList.add("disabled");
     this.statusTarget.textContent = "Skonfiguruj API, aby rozpocząć";
 
+    if (this.apiKey) {
+      this.hfTranslationClient = new InferenceClient(this.apiKey);
+    }
+
+    this.translationModels = {
+      "pl-PL": "Helsinki-NLP/opus-mt-pl-en", // polski -> angielski
+      "en-US": "Helsinki-NLP/opus-mt-en-pl", // angielski -> polski
+      "es-ES": "Helsinki-NLP/opus-mt-es-en",
+      "fr-FR": "Helsinki-NLP/opus-mt-fr-en",
+      "de-DE": "Helsinki-NLP/opus-mt-de-en",
+    };
+
     if (
       !("webkitSpeechRecognition" in window) &&
       !("SpeechRecognition" in window)
@@ -152,6 +164,96 @@ class LanguageChatbotController extends Controller {
     this.recognition.onend = () => this.stopRecording();
   }
 
+  async fetchTranslation(word) {
+    if (!this.apiKey || !this.hf) {
+      // Brak klucza API lub klienta - zwróć słowo bez zmian
+      return word;
+    }
+
+    // Wybierz model na podstawie obecnego języka
+    const model =
+      this.translationModels[this.currentLanguage] ||
+      "Helsinki-NLP/opus-mt-pl-en";
+
+    try {
+      // Wywołanie API Hugging Face - model tłumaczenia
+      const response = await this.hf.textGeneration({
+        model,
+        inputs: word,
+        parameters: {
+          max_new_tokens: 60,
+          do_sample: false,
+          temperature: 0,
+        },
+      });
+
+      // Oczekujemy, że odpowiedź to tablica obiektów z generated_text
+      if (
+        Array.isArray(response) &&
+        response.length > 0 &&
+        response[0].generated_text
+      ) {
+        // Wygenerowany tekst może zawierać oryginalne słowo + tłumaczenie, więc wyciągamy tłumaczenie:
+        // Najprościej: usuń oryginalne słowo z początku i przytnij whitespace
+        let translated = response[0].generated_text;
+        if (translated.toLowerCase().startsWith(word.toLowerCase())) {
+          translated = translated.slice(word.length).trim();
+        }
+        return translated || word;
+      }
+
+      return word;
+    } catch (error) {
+      console.error("Błąd tłumaczenia:", error);
+      return word; // na wypadek błędu zwracamy oryginał
+    }
+  }
+
+  async fetchTranslation(word) {
+    if (!this.apiKey || !this.hf) {
+      // Brak klucza API lub klienta - zwróć słowo bez zmian
+      return word;
+    }
+
+    // Wybierz model na podstawie obecnego języka
+    const model =
+      this.translationModels[this.currentLanguage] ||
+      "Helsinki-NLP/opus-mt-pl-en";
+
+    try {
+      // Wywołanie API Hugging Face - model tłumaczenia
+      const response = await this.hf.textGeneration({
+        model,
+        inputs: word,
+        parameters: {
+          max_new_tokens: 60,
+          do_sample: false,
+          temperature: 0,
+        },
+      });
+
+      // Oczekujemy, że odpowiedź to tablica obiektów z generated_text
+      if (
+        Array.isArray(response) &&
+        response.length > 0 &&
+        response[0].generated_text
+      ) {
+        // Wygenerowany tekst może zawierać oryginalne słowo + tłumaczenie, więc wyciągamy tłumaczenie:
+        // Najprościej: usuń oryginalne słowo z początku i przytnij whitespace
+        let translated = response[0].generated_text;
+        if (translated.toLowerCase().startsWith(word.toLowerCase())) {
+          translated = translated.slice(word.length).trim();
+        }
+        return translated || word;
+      }
+
+      return word;
+    } catch (error) {
+      console.error("Błąd tłumaczenia:", error);
+      return word; // na wypadek błędu zwracamy oryginał
+    }
+  }
+
   toggleRecording() {
     if (!this.apiKey) {
       this.addErrorMessage("Najpierw skonfiguruj klucz API.");
@@ -246,8 +348,130 @@ class LanguageChatbotController extends Controller {
     this.scrollToBottom();
   }
 
+  onWordClick(event, word) {
+    event.stopPropagation();
+
+    // Usuń istniejący popup jeśli jest
+    const existingPopup = this.element.querySelector(".word-popup");
+    if (existingPopup) existingPopup.remove();
+
+    // Tworzymy popup z tłumaczeniem i gwiazdką
+    const popup = document.createElement("div");
+    popup.className = "word-popup";
+    popup.style.position = "absolute";
+    popup.style.background = "#fff";
+    popup.style.border = "1px solid #ccc";
+    popup.style.padding = "8px";
+    popup.style.borderRadius = "5px";
+    popup.style.boxShadow = "0 2px 6px rgba(0,0,0,0.2)";
+    popup.style.zIndex = 1000;
+    popup.style.minWidth = "150px";
+
+    // Tłumaczenie (można tu podpiąć API tłumaczenia)
+    const translationText = document.createElement("div");
+    translationText.textContent = "Tłumaczenie: ..."; // Później uzupełnimy
+
+    // Gwiazdka do zaznaczenia ulubionego
+    const starBtn = document.createElement("button");
+    starBtn.textContent = this.isStarred(word) ? "★" : "☆";
+    starBtn.style.fontSize = "20px";
+    starBtn.style.border = "none";
+    starBtn.style.background = "transparent";
+    starBtn.style.cursor = "pointer";
+    starBtn.title = "Dodaj do ulubionych";
+
+    starBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.toggleStar(word);
+      starBtn.textContent = this.isStarred(word) ? "★" : "☆";
+    });
+
+    popup.appendChild(translationText);
+    popup.appendChild(starBtn);
+
+    this.element.appendChild(popup);
+
+    // Pozycjonowanie popupu pod klikniętym słowem
+    const rect = event.target.getBoundingClientRect();
+    const containerRect = this.element.getBoundingClientRect();
+
+    popup.style.top = `${
+      rect.bottom - containerRect.top + window.scrollY + 5
+    }px`;
+    popup.style.left = `${rect.left - containerRect.left + window.scrollX}px`;
+
+    // Pobierz tłumaczenie słowa
+    this.fetchTranslation(word).then((trans) => {
+      translationText.textContent = `Tłumaczenie: ${trans}`;
+    });
+
+    // Zamknij popup po kliknięciu poza popupem
+    const onClickOutside = (ev) => {
+      if (!popup.contains(ev.target)) {
+        popup.remove();
+        document.removeEventListener("click", onClickOutside);
+      }
+    };
+    document.addEventListener("click", onClickOutside);
+  }
+
+  getStarredWords() {
+    const data = localStorage.getItem("starredWords");
+    return data ? JSON.parse(data) : [];
+  }
+
+  isStarred(word) {
+    const starred = this.getStarredWords();
+    return starred.includes(word.toLowerCase());
+  }
+
+  toggleStar(word) {
+    let starred = this.getStarredWords();
+    const wordLower = word.toLowerCase();
+
+    if (starred.includes(wordLower)) {
+      starred = starred.filter((w) => w !== wordLower);
+    } else {
+      starred.push(wordLower);
+    }
+
+    localStorage.setItem("starredWords", JSON.stringify(starred));
+  }
+
+  async fetchTranslation(word) {
+    // TODO: podpiąć API tłumaczenia, np. Hugging Face Translation lub inne
+  }
+
   addBotMessage(text) {
-    const msg = this.createMessageElement("bot", text);
+    const msg = document.createElement("div");
+    msg.className = "message bot";
+
+    const avatar = document.createElement("div");
+    avatar.className = "avatar";
+    avatar.textContent = "🤖";
+
+    const content = document.createElement("div");
+    content.className = "message-content";
+
+    // Podziel tekst na słowa i renderuj je jako klikane spany
+    const words = text.split(/(\s+)/); // zachowujemy spacje
+    words.forEach((word) => {
+      if (word.trim().length === 0) {
+        content.appendChild(document.createTextNode(word));
+        return;
+      }
+
+      const span = document.createElement("span");
+      span.className = "translatable-word";
+      span.textContent = word;
+      span.style.cursor = "pointer";
+      span.addEventListener("click", (e) => this.onWordClick(e, word));
+      content.appendChild(span);
+    });
+
+    msg.appendChild(avatar);
+    msg.appendChild(content);
+
     this.messagesTarget.appendChild(msg);
     this.scrollToBottom();
   }

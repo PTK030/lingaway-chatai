@@ -14,6 +14,17 @@ body {
   padding: 20px;
 }
 
+.translatable-word:hover {
+  background-color: #fffbcc;
+  border-radius: 3px;
+}
+
+.word-popup {
+  font-size: 14px;
+  color: #333;
+  user-select: none;
+}
+
 .chat-container {
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(10px);
