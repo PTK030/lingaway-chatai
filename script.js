@@ -1,742 +1,725 @@
-import { HfInference } from "https://cdn.jsdelivr.net/npm/@huggingface/inference@2/+esm";
+// Inicjalizacja Stimulus
+const { Application, Controller } = Stimulus;
+const application = Application.start();
 
-class LanguageChatbot {
-  constructor() {
-    this.currentLanguage = "pl-PL";
-    this.isRecording = false;
-    this.isProcessing = false;
-    this.apiKey = null;
-    this.apiProvider = "huggingface";
-    this.hf = null;
-    this.currentFlashcardIndex = 0;
-    this.flashcardFlipped = false;
-    this.correctAnswers = 0;
+// Zmienne globalne - używamy pamięci zamiast localStorage
+let apiKey = null;
+let apiProvider = 'groq'; // 'groq' lub 'huggingface'
+let favorites = [];
+let currentCardIndex = 0;
+let conversationHistory = [];
 
-    this.translationModels = {
-      "pl-PL": "Helsinki-NLP/opus-mt-pl-en",
-      "en-US": "Helsinki-NLP/opus-mt-en-pl",
-      "es-ES": "Helsinki-NLP/opus-mt-es-en",
-      "fr-FR": "Helsinki-NLP/opus-mt-fr-en",
-      "de-DE": "Helsinki-NLP/opus-mt-de-en",
-    };
-
-    this.initElements();
-    this.initEvents();
-    this.checkSpeechSupport();
-    this.loadVoices();
-    this.initializeSpeechRecognition();
-    this.showPanel("chat");
-    this.loadApiKey();
+// Główny kontroler aplikacji
+class ApplicationController extends Controller {
+  connect() {
+    this.checkApiSetup();
+    this.setupKeyboardShortcuts();
   }
 
-  initElements() {
-    // Chat elements
-    this.messagesEl = document.getElementById("messages");
-    this.textInputEl = document.getElementById("text-input");
-    this.sendBtn = document.getElementById("send-btn");
-    this.micBtn = document.getElementById("mic-btn");
-    this.statusEl = document.getElementById("status");
-    this.clearChatBtn = document.getElementById("clear-chat");
-    this.loadingEl = document.getElementById("loading");
+  switchTab(event) {
+    const tabId = event.currentTarget.dataset.tab;
 
-    // API setup elements
-    this.apiSetupEl = document.getElementById("api-setup");
-    this.apiProviderEl = document.getElementById("api-provider");
-    this.apiInputEl = document.getElementById("api-input");
-    this.apiSaveBtn = document.getElementById("api-save-btn");
-    this.apiInfoHfEl = document.getElementById("api-info-hf");
-    this.apiInfoOpenaiEl = document.getElementById("api-info-openai");
-
-    // Navigation tabs
-    this.tabChatBtn = document.getElementById("tab-chat");
-    this.tabFavoritesBtn = document.getElementById("tab-favorites");
-    this.tabFlashcardsBtn = document.getElementById("tab-flashcards");
-
-    // Panels
-    this.panelChat = document.getElementById("panel-chat");
-    this.panelFavorites = document.getElementById("panel-favorites");
-    this.panelFlashcards = document.getElementById("panel-flashcards");
-
-    // Favorites elements
-    this.favoritesList = document.getElementById("favorites-list");
-    this.favoritesSearchEl = document.getElementById("favorites-search");
-    this.exportFavoritesBtn = document.getElementById("export-favorites");
-    this.clearFavoritesBtn = document.getElementById("clear-favorites");
-
-    // Flashcards elements
-    this.flashcardEl = document.getElementById("flashcard");
-    this.flashcardEmptyEl = document.getElementById("flashcard-empty");
-    this.cardWordEl = document.getElementById("card-word");
-    this.cardTranslationEl = document.getElementById("card-translation");
-    this.cardActionsEl = document.getElementById("card-actions");
-    this.currentCardEl = document.getElementById("current-card");
-    this.totalCardsEl = document.getElementById("total-cards");
-    this.correctAnswersEl = document.getElementById("correct-answers");
-    this.knowItBtn = document.getElementById("know-it");
-    this.learningBtn = document.getElementById("learning");
-    this.dontKnowBtn = document.getElementById("dont-know");
-    this.shuffleBtn = document.getElementById("shuffle-flashcards");
-    this.resetProgressBtn = document.getElementById("reset-progress");
-    this.goToChatBtn = document.getElementById("go-to-chat");
-  }
-
-  initEvents() {
-    // Chat events
-    this.micBtn.addEventListener("click", () => this.toggleRecording());
-    this.sendBtn.addEventListener("click", () => this.sendTextMessage());
-    this.clearChatBtn.addEventListener("click", () => this.clearChat());
-
-    // Text input events
-    this.textInputEl.addEventListener("keypress", (e) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        this.sendTextMessage();
-      }
+    // Aktualizuj aktywną zakładkę
+    document.querySelectorAll('.nav-tab').forEach(tab => {
+      tab.classList.remove('active');
     });
+    event.currentTarget.classList.add('active');
 
-    this.textInputEl.addEventListener("input", () => {
-      this.autoResizeTextarea();
+    // Pokaż odpowiedni panel
+    document.querySelectorAll('.panel').forEach(panel => {
+      panel.classList.remove('active');
     });
+    document.getElementById(`panel-${tabId}`).classList.add('active');
 
-    // API setup events
-    this.apiSaveBtn.addEventListener("click", () => this.saveApiKey());
-    this.apiProviderEl.addEventListener("change", () => this.toggleApiInfo());
-    this.apiInputEl.addEventListener("keypress", (e) => {
-      if (e.key === "Enter") {
-        this.saveApiKey();
-      }
-    });
-
-    // Navigation events
-    this.tabChatBtn.addEventListener("click", () => this.showPanel("chat"));
-    this.tabFavoritesBtn.addEventListener("click", () => this.showPanel("favorites"));
-    this.tabFlashcardsBtn.addEventListener("click", () => this.showPanel("flashcards"));
-
-    // Favorites events
-    this.favoritesSearchEl.addEventListener("input", () => this.filterFavorites());
-    this.exportFavoritesBtn.addEventListener("click", () => this.exportFavorites());
-    this.clearFavoritesBtn.addEventListener("click", () => this.clearAllFavorites());
-
-    // Flashcards events
-    this.flashcardEl.addEventListener("click", () => this.flipFlashcard());
-    this.knowItBtn.addEventListener("click", () => this.answerFlashcard("correct"));
-    this.learningBtn.addEventListener("click", () => this.answerFlashcard("learning"));
-    this.dontKnowBtn.addEventListener("click", () => this.answerFlashcard("wrong"));
-    this.shuffleBtn.addEventListener("click", () => this.shuffleFlashcards());
-    this.resetProgressBtn.addEventListener("click", () => this.resetFlashcardProgress());
-    this.goToChatBtn.addEventListener("click", () => this.showPanel("chat"));
-  }
-
-  loadApiKey() {
-    const savedKey = sessionStorage.getItem("api_key");
-    const savedProvider = sessionStorage.getItem("api_provider") || "huggingface";
-
-    if (savedKey) {
-      this.apiKey = savedKey;
-      this.apiProvider = savedProvider;
-      this.apiProviderEl.value = savedProvider;
-      this.apiSetupEl.classList.remove("show");
-      this.statusEl.textContent = "Kliknij mikrofon i zacznij mówić";
-      this.micBtn.classList.remove("disabled");
-
-      if (savedProvider === "huggingface") {
-        this.hf = new HfInference(savedKey);
-      }
+    // Odśwież dane w aktywnym panelu
+    if (tabId === 'favorites') {
+      this.refreshFavorites();
+    } else if (tabId === 'flashcards') {
+      this.refreshFlashcards();
     }
-    this.toggleApiInfo();
   }
 
-  saveApiKey() {
-    const key = this.apiInputEl.value.trim();
-    const provider = this.apiProviderEl.value;
+  checkApiSetup() {
+    // W środowisku bez localStorage, zawsze pokazuj setup
+    document.getElementById('api-setup').classList.add('show');
+  }
 
+  setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.key === 'Enter') {
+        const chatInput = document.querySelector('[data-chat-target="input"]');
+        if (chatInput && document.activeElement === chatInput) {
+          const chatController = application.getControllerForElementAndIdentifier(
+              document.querySelector('[data-controller="chat"]'),
+              'chat'
+          );
+          if (chatController) chatController.sendMessage();
+        }
+      }
+    });
+  }
+
+  refreshFavorites() {
+    const favController = application.getControllerForElementAndIdentifier(
+        document.querySelector('[data-controller="favorites"]'),
+        'favorites'
+    );
+    if (favController) favController.displayFavorites();
+  }
+
+  refreshFlashcards() {
+    const flashController = application.getControllerForElementAndIdentifier(
+        document.querySelector('[data-controller="flashcards"]'),
+        'flashcards'
+    );
+    if (flashController) flashController.loadCards();
+  }
+}
+
+// Kontroler konfiguracji API
+class ApiSetupController extends Controller {
+  static targets = ["input", "provider"]
+
+  connect() {
+    this.setupProviderListener();
+    this.updatePlaceholder();
+  }
+
+  setupProviderListener() {
+    if (this.hasProviderTarget) {
+      this.providerTarget.addEventListener('change', (e) => {
+        apiProvider = e.target.value;
+        this.updatePlaceholder();
+      });
+    }
+  }
+
+  updatePlaceholder() {
+    const placeholder = apiProvider === 'groq' ? 'gsk_...' : 'hf_...';
+    if (this.hasInputTarget) {
+      this.inputTarget.placeholder = placeholder;
+    }
+  }
+
+  save() {
+    const key = this.inputTarget.value.trim();
     if (!key) {
-      this.showNotification("Wprowadź klucz API", "error");
+      alert('Wprowadź klucz API');
       return;
     }
 
-    this.apiKey = key;
-    this.apiProvider = provider;
-    sessionStorage.setItem("api_key", key);
-    sessionStorage.setItem("api_provider", provider);
-
-    if (provider === "huggingface") {
-      this.hf = new HfInference(key);
+    // Pobierz aktualny provider z selecta
+    if (this.hasProviderTarget) {
+      apiProvider = this.providerTarget.value;
     }
 
-    this.apiSetupEl.classList.remove("show");
-    this.statusEl.textContent = "Kliknij mikrofon i zacznij mówić";
-    this.micBtn.classList.remove("disabled");
-    this.showNotification("Klucz API zapisany pomyślnie!", "success");
-  }
-
-  toggleApiInfo() {
-    const provider = this.apiProviderEl.value;
-    if (provider === "huggingface") {
-      this.apiInfoHfEl.style.display = "block";
-      this.apiInfoOpenaiEl.style.display = "none";
-    } else {
-      this.apiInfoHfEl.style.display = "none";
-      this.apiInfoOpenaiEl.style.display = "block";
+    // Podstawowa walidacja klucza
+    if (apiProvider === 'groq' && !key.startsWith('gsk_')) {
+      alert('Klucz Groq powinien zaczynać się od "gsk_"');
+      return;
     }
-  }
-
-  showPanel(panelName) {
-    // Hide all panels and deactivate all tabs
-    document.querySelectorAll(".panel").forEach(panel => {
-      panel.classList.remove("active");
-    });
-    document.querySelectorAll(".nav-tab").forEach(tab => {
-      tab.classList.remove("active");
-    });
-
-    // Show selected panel and activate corresponding tab
-    document.getElementById(`panel-${panelName}`).classList.add("active");
-    document.getElementById(`tab-${panelName}`).classList.add("active");
-
-    // Initialize specific panel functionality
-    if (panelName === "favorites") {
-      this.renderFavorites();
-    } else if (panelName === "flashcards") {
-      this.initFlashcards();
-    }
-  }
-
-  autoResizeTextarea() {
-    this.textInputEl.style.height = "auto";
-    this.textInputEl.style.height = Math.min(this.textInputEl.scrollHeight, 120) + "px";
-  }
-
-  sendTextMessage() {
-    const text = this.textInputEl.value.trim();
-    if (text.length === 0) return;
-
-    this.addUserMessage(text);
-    this.textInputEl.value = "";
-    this.autoResizeTextarea();
-    this.processUserInput(text);
-  }
-
-  clearChat() {
-    if (confirm("Czy na pewno chcesz wyczyścić całą rozmowę?")) {
-      this.messagesEl.innerHTML = "";
-    }
-  }
-
-  toggleRecording() {
-    if (!this.apiKey) {
-      this.showNotification("Najpierw skonfiguruj klucz API", "warning");
+    if (apiProvider === 'huggingface' && !key.startsWith('hf_')) {
+      alert('Klucz Hugging Face powinien zaczynać się od "hf_"');
       return;
     }
 
-    if (this.isRecording) {
-      this.stopRecording();
-    } else {
-      this.startRecording();
+    apiKey = key;
+    document.getElementById('api-setup').classList.remove('show');
+
+    // Dodaj powitanie
+    const chatController = application.getControllerForElementAndIdentifier(
+        document.querySelector('[data-controller="chat"]'),
+        'chat'
+    );
+    if (chatController) {
+      chatController.addMessage(`Witaj! Jestem twoim asystentem do nauki języków. Używam ${apiProvider === 'groq' ? 'Groq' : 'Hugging Face'} API. Jak mogę ci pomóc?`, 'bot');
     }
   }
+}
 
-  startRecording() {
-    if (this.recognition) {
-      this.recognition.start();
-    }
+// Kontroler czatu
+class ChatController extends Controller {
+  static targets = ["messages", "input"]
+
+  connect() {
+    this.setupInputHandlers();
   }
 
-  stopRecording() {
-    this.isRecording = false;
-    this.micBtn.classList.remove("recording");
-    this.statusEl.textContent = "Kliknij mikrofon i zacznij mówić";
-    if (this.recognition) {
-      this.recognition.stop();
-    }
-  }
-
-  checkSpeechSupport() {
-    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-      this.addErrorMessage("Twoja przeglądarka nie obsługuje Web Speech API. Użyj Chrome lub Edge.");
-      this.micBtn.disabled = true;
-    }
-    if (!("speechSynthesis" in window)) {
-      this.addErrorMessage("Twoja przeglądarka nie obsługuje funkcji odczytu tekstu.");
-    }
-  }
-
-  initializeSpeechRecognition() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
-
-    this.recognition = new SpeechRecognition();
-    this.recognition.continuous = false;
-    this.recognition.interimResults = false;
-    this.recognition.lang = this.currentLanguage;
-
-    this.recognition.onstart = () => {
-      this.isRecording = true;
-      this.micBtn.classList.add("recording");
-      this.statusEl.textContent = "🎤 Słucham...";
-    };
-
-    this.recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      this.addUserMessage(transcript);
-      this.processUserInput(transcript);
-    };
-
-    this.recognition.onerror = (event) => {
-      this.stopRecording();
-      if (event.error === "not-allowed") {
-        this.addErrorMessage("Dostęp do mikrofonu został odrzucony. Sprawdź ustawienia przeglądarki.");
-      } else {
-        this.addErrorMessage(`Błąd rozpoznawania mowy: ${event.error}`);
+  setupInputHandlers() {
+    this.inputTarget.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        this.sendMessage();
       }
-    };
+    });
 
-    this.recognition.onend = () => this.stopRecording();
+    // Auto-resize textarea
+    this.inputTarget.addEventListener('input', () => {
+      this.inputTarget.style.height = 'auto';
+      this.inputTarget.style.height = this.inputTarget.scrollHeight + 'px';
+    });
   }
 
-  loadVoices() {
-    this.voices = speechSynthesis.getVoices();
-    if (speechSynthesis.onvoiceschanged !== undefined) {
-      speechSynthesis.onvoiceschanged = () => {
-        this.voices = speechSynthesis.getVoices();
-      };
-    }
-  }
+  async sendMessage() {
+    const message = this.inputTarget.value.trim();
+    if (!message || !apiKey) return;
 
-  speakText(text) {
-    if (!("speechSynthesis" in window)) return;
+    this.inputTarget.value = '';
+    this.inputTarget.style.height = 'auto';
+    this.addMessage(message, 'user');
 
-    speechSynthesis.cancel();
-    this.statusEl.textContent = "🔊 Mówię...";
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voice = this.voices.find(v => v.lang.startsWith(this.currentLanguage.split("-")[0]));
-    if (voice) utterance.voice = voice;
-
-    utterance.lang = this.currentLanguage;
-    utterance.rate = 0.8;
-    utterance.pitch = 1;
-
-    utterance.onend = () => {
-      this.statusEl.textContent = "Kliknij mikrofon i zacznij mówić";
-    };
-
-    utterance.onerror = () => {
-      this.statusEl.textContent = "Błąd podczas odtwarzania mowy";
-    };
-
-    speechSynthesis.speak(utterance);
-  }
-
-  async processUserInput(text) {
-    if (this.isProcessing) return;
-
-    this.isProcessing = true;
-    this.showLoading(true);
+    // Dodaj do historii
+    conversationHistory.push({ role: 'user', content: message });
 
     try {
-      let response;
-      if (this.apiProvider === "huggingface") {
-        response = await this.processWithHuggingFace(text);
-      } else {
-        response = await this.processWithOpenAI(text);
-      }
-
-      this.addBotMessage(response);
-      this.speakText(response);
+      const response = await this.getAIResponse(message);
+      this.addMessage(response, 'bot');
+      conversationHistory.push({ role: 'assistant', content: response });
     } catch (error) {
-      console.error("Error processing input:", error);
-      this.addErrorMessage("Wystąpił błąd podczas przetwarzania. Spróbuj ponownie.");
-    } finally {
-      this.isProcessing = false;
-      this.showLoading(false);
+      console.error('API Error:', error);
+      this.addMessage('Błąd połączenia z API. Sprawdź klucz lub spróbuj ponownie.', 'bot');
     }
   }
 
-  async processWithHuggingFace(text) {
-    const prompt = `Jesteś pomocnym asystentem językowym. Odpowiadaj w języku polskim, naturalnie i przyjaznym tonem. Użytkownik powiedział: "${text}"`;
+  addMessage(content, type) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${type}-message`;
 
-    const response = await this.hf.textGeneration({
-      model: "microsoft/DialoGPT-medium",
-      inputs: prompt,
-      parameters: {
-        max_new_tokens: 100,
-        temperature: 0.7,
-        return_full_text: false
-      }
-    });
+    if (type === 'bot') {
+      messageDiv.innerHTML = this.makeWordsClickable(content);
+    } else {
+      messageDiv.textContent = content;
+    }
 
-    return response.generated_text || "Przepraszam, nie mogę teraz odpowiedzieć. Spróbuj ponownie.";
+    this.messagesTarget.appendChild(messageDiv);
+    this.messagesTarget.scrollTop = this.messagesTarget.scrollHeight;
   }
 
-  async processWithOpenAI(text) {
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
+  makeWordsClickable(text) {
+    // Ulepszone dopasowanie słów (obsługa polskich znaków)
+    return text.replace(/\b[a-zA-ZąćęłńóśźżĄĆĘŁŃÓŚŹŻ]+\b/g, (word) => {
+      return `<span class="clickable-word" onclick="showTranslation('${word.replace(/'/g, "\\'")}', event)">${word}</span>`;
+    });
+  }
+
+  async getAIResponse(message) {
+    if (apiProvider === 'groq') {
+      return await this.getGroqResponse(message);
+    } else {
+      return await this.getHuggingFaceResponse(message);
+    }
+  }
+
+  async getGroqResponse(message) {
+    const messages = [
+      {
+        role: 'system',
+        content: 'Jesteś pomocnym asystentem do nauki języków. Odpowiadaj w języku polskim, krótko i pomocnie. Pomagaj w nauce gramatyki, słownictwa i konwersacji.'
+      },
+      ...conversationHistory.slice(-10), // Zachowaj ostatnie 10 wiadomości
+      {
+        role: 'user',
+        content: message
+      }
+    ];
+
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
       headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${this.apiKey}`
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: "gpt-3.5-turbo",
-        messages: [
-          {
-            role: "system",
-            content: "Jesteś pomocnym asystentem językowym. Odpowiadaj w języku polskim, naturalnie i przyjaznym tonem."
-          },
-          {
-            role: "user",
-            content: text
-          }
-        ],
-        max_tokens: 150,
+        model: 'llama3-8b-8192', // Szybki model Groq
+        messages: messages,
+        max_tokens: 500,
         temperature: 0.7
       })
     });
 
-    const data = await response.json();
-
     if (!response.ok) {
-      throw new Error(data.error?.message || "Błąd API OpenAI");
+      const errorText = await response.text();
+      throw new Error(`Groq API Error: ${response.status} - ${errorText}`);
     }
 
+    const data = await response.json();
     return data.choices[0].message.content;
   }
 
-  async translateWord(word) {
-    try {
-      const model = this.translationModels[this.currentLanguage];
-      if (!model) return "Nie można przetłumaczyć";
+  async getHuggingFaceResponse(message) {
+    // Formatuj historię dla Hugging Face
+    let prompt = "Jesteś pomocnym asystentem do nauki języków. Odpowiadaj w języku polskim, krótko i pomocnie.\n\n";
 
-      if (this.apiProvider === "huggingface" && this.hf) {
-        const result = await this.hf.translation({
-          model: model,
-          inputs: word
-        });
-        return result.translation_text || word;
-      } else {
-        // Fallback for OpenAI or if translation fails
-        return `[tłumaczenie: ${word}]`;
-      }
-    } catch (error) {
-      console.error("Translation error:", error);
-      return word;
-    }
-  }
-
-  showLoading(show) {
-    this.loadingEl.style.display = show ? "flex" : "none";
-  }
-
-  addUserMessage(text) {
-    const div = document.createElement("div");
-    div.className = "message user-message";
-    div.textContent = text;
-    this.messagesEl.appendChild(div);
-    this.scrollMessages();
-  }
-
-  addBotMessage(text) {
-    this.removeTranslationPopup();
-
-    const div = document.createElement("div");
-    div.className = "message bot-message";
-
-    const words = text.split(/(\s+)/);
-    words.forEach(word => {
-      if (word.trim().length === 0) {
-        div.appendChild(document.createTextNode(word));
-        return;
-      }
-      const span = document.createElement("span");
-      span.className = "clickable-word";
-      span.textContent = word;
-      span.addEventListener("click", e => this.onWordClick(e, word.trim()));
-      div.appendChild(span);
+    conversationHistory.slice(-6).forEach(msg => {
+      prompt += `${msg.role === 'user' ? 'Użytkownik' : 'Asystent'}: ${msg.content}\n`;
     });
 
-    this.messagesEl.appendChild(div);
-    this.scrollMessages();
-  }
+    prompt += `Użytkownik: ${message}\nAsystent:`;
 
-  addErrorMessage(text) {
-    const div = document.createElement("div");
-    div.className = "message error-message";
-    div.textContent = text;
-    this.messagesEl.appendChild(div);
-    this.scrollMessages();
-  }
-
-  scrollMessages() {
-    this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
-  }
-
-  removeTranslationPopup() {
-    const popup = document.querySelector(".translation-popup");
-    if (popup) popup.remove();
-  }
-
-  async onWordClick(event, word) {
-    event.stopPropagation();
-    this.removeTranslationPopup();
-
-    const cleanWord = word.replace(/[.,!?;:"'()]/g, "");
-    if (cleanWord.length === 0) return;
-
-    const popup = document.createElement("div");
-    popup.className = "translation-popup";
-    popup.style.top = `${event.clientY + 10}px`;
-    popup.style.left = `${event.clientX + 10}px`;
-    popup.textContent = "Tłumaczę...";
-
-    document.body.appendChild(popup);
-
-    const translation = await this.translateWord(cleanWord);
-
-    popup.innerHTML = `<strong>${cleanWord}</strong> — ${translation}`;
-
-    const starBtn = document.createElement("button");
-    starBtn.className = "star-btn";
-    starBtn.textContent = "★ Dodaj do ulubionych";
-    starBtn.addEventListener("click", () => {
-      this.addToFavorites(cleanWord, translation);
-      popup.remove();
-    });
-    popup.appendChild(document.createElement("br"));
-    popup.appendChild(starBtn);
-
-    const closePopup = (e) => {
-      if (!popup.contains(e.target)) {
-        popup.remove();
-        document.removeEventListener("click", closePopup);
-      }
-    };
-    setTimeout(() => {
-      document.addEventListener("click", closePopup);
-    }, 100);
-  }
-
-  getFavorites() {
-    const fav = sessionStorage.getItem("favorites");
-    return fav ? JSON.parse(fav) : [];
-  }
-
-  saveFavorites(favs) {
-    sessionStorage.setItem("favorites", JSON.stringify(favs));
-  }
-
-  addToFavorites(word, translation) {
-    let favs = this.getFavorites();
-    if (favs.find(f => f.word.toLowerCase() === word.toLowerCase())) {
-      this.showNotification("To słówko jest już w ulubionych.", "warning");
-      return;
-    }
-    favs.push({ word, translation, date: new Date().toISOString() });
-    this.saveFavorites(favs);
-    this.renderFavorites();
-    this.showNotification(`Dodano "${word}" do ulubionych!`, "success");
-  }
-
-  removeFromFavorites(word) {
-    let favs = this.getFavorites();
-    favs = favs.filter(f => f.word.toLowerCase() !== word.toLowerCase());
-    this.saveFavorites(favs);
-    this.renderFavorites();
-    this.updateFlashcardStats();
-  }
-
-  renderFavorites() {
-    const favs = this.getFavorites();
-    const searchTerm = this.favoritesSearchEl.value.toLowerCase();
-    const filteredFavs = favs.filter(fav =>
-        fav.word.toLowerCase().includes(searchTerm) ||
-        fav.translation.toLowerCase().includes(searchTerm)
-    );
-
-    this.favoritesList.innerHTML = "";
-
-    if (filteredFavs.length === 0) {
-      const emptyState = document.createElement("div");
-      emptyState.className = "empty-state";
-      emptyState.innerHTML = `
-        <div class="empty-icon">⭐</div>
-        <h3>${favs.length === 0 ? "Brak ulubionych słówek" : "Brak wyników wyszukiwania"}</h3>
-        <p>${favs.length === 0 ? "Kliknij na słowo w rozmowie, aby je dodać." : "Spróbuj innego wyszukiwania."}</p>
-      `;
-      this.favoritesList.appendChild(emptyState);
-      return;
-    }
-
-    filteredFavs.forEach(({ word, translation }) => {
-      const div = document.createElement("div");
-      div.className = "favorite-word";
-
-      const contentDiv = document.createElement("div");
-      contentDiv.className = "favorite-word-content";
-      contentDiv.textContent = `${word} — ${translation}`;
-
-      const removeBtn = document.createElement("button");
-      removeBtn.className = "remove-favorite-btn";
-      removeBtn.textContent = "Usuń";
-      removeBtn.addEventListener("click", () => this.removeFromFavorites(word));
-
-      div.appendChild(contentDiv);
-      div.appendChild(removeBtn);
-      this.favoritesList.appendChild(div);
-    });
-  }
-
-  filterFavorites() {
-    this.renderFavorites();
-  }
-
-  exportFavorites() {
-    const favs = this.getFavorites();
-    if (favs.length === 0) {
-      this.showNotification("Brak słówek do eksportu.", "warning");
-      return;
-    }
-
-    const csvContent = "data:text/csv;charset=utf-8," +
-        "Słowo,Tłumaczenie,Data\n" +
-        favs.map(f => `"${f.word}","${f.translation}","${new Date(f.date).toLocaleDateString()}"`).join("\n");
-
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `ulubione_slowka_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }
-
-  clearAllFavorites() {
-    if (confirm("Czy na pewno chcesz usunąć wszystkie ulubione słówka?")) {
-      sessionStorage.removeItem("favorites");
-      this.renderFavorites();
-      this.updateFlashcardStats();
-      this.showNotification("Wszystkie ulubione słówka zostały usunięte.", "success");
-    }
-  }
-
-  // Flashcards functionality
-  initFlashcards() {
-    const favs = this.getFavorites();
-    if (favs.length === 0) {
-      this.flashcardEmptyEl.style.display = "block";
-      this.flashcardEl.style.display = "none";
-      this.cardActionsEl.style.display = "none";
-    } else {
-      this.flashcardEmptyEl.style.display = "none";
-      this.flashcardEl.style.display = "block";
-      this.currentFlashcardIndex = 0;
-      this.showCurrentFlashcard();
-    }
-    this.updateFlashcardStats();
-  }
-
-  showCurrentFlashcard() {
-    const favs = this.getFavorites();
-    if (favs.length === 0) return;
-
-    const current = favs[this.currentFlashcardIndex];
-    this.cardWordEl.textContent = current.word;
-    this.cardTranslationEl.textContent = current.translation;
-
-    this.flashcardFlipped = false;
-    this.flashcardEl.classList.remove("flipped");
-    this.cardActionsEl.style.display = "none";
-  }
-
-  flipFlashcard() {
-    if (this.getFavorites().length === 0) return;
-
-    this.flashcardFlipped = !this.flashcardFlipped;
-    this.flashcardEl.classList.toggle("flipped");
-
-    if (this.flashcardFlipped) {
-      this.cardActionsEl.style.display = "flex";
-    }
-  }
-
-  answerFlashcard(result) {
-    if (result === "correct") {
-      this.correctAnswers++;
-    }
-
-    this.nextFlashcard();
-    this.updateFlashcardStats();
-  }
-
-  nextFlashcard() {
-    const favs = this.getFavorites();
-    if (favs.length === 0) return;
-
-    this.currentFlashcardIndex = (this.currentFlashcardIndex + 1) % favs.length;
-    this.showCurrentFlashcard();
-  }
-
-  shuffleFlashcards() {
-    const favs = this.getFavorites();
-    if (favs.length <= 1) return;
-
-    // Fisher-Yates shuffle algorithm
-    for (let i = favs.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [favs[i], favs[j]] = [favs[j], favs[i]];
-    }
-
-    this.saveFavorites(favs);
-    this.currentFlashcardIndex = 0;
-    this.showCurrentFlashcard();
-    this.showNotification("Fiszki zostały przetasowane!", "success");
-  }
-
-  resetFlashcardProgress() {
-    if (confirm("Czy na pewno chcesz zresetować postęp nauki?")) {
-      this.correctAnswers = 0;
-      this.currentFlashcardIndex = 0;
-      this.showCurrentFlashcard();
-      this.updateFlashcardStats();
-      this.showNotification("Postęp został zresetowany.", "success");
-    }
-  }
-
-  updateFlashcardStats() {
-    const favs = this.getFavorites();
-    this.currentCardEl.textContent = favs.length > 0 ? this.currentFlashcardIndex + 1 : 0;
-    this.totalCardsEl.textContent = favs.length;
-    this.correctAnswersEl.textContent = this.correctAnswers;
-  }
-
-  showNotification(message, type = "info") {
-    // Remove existing notifications
-    const existingNotifications = document.querySelectorAll(".notification");
-    existingNotifications.forEach(n => n.remove());
-
-    const notification = document.createElement("div");
-    notification.className = `notification notification-${type}`;
-    notification.textContent = message;
-
-    document.body.appendChild(notification);
-
-    // Show notification
-    setTimeout(() => {
-      notification.classList.add("show");
-    }, 100);
-
-    // Hide notification after 3 seconds
-    setTimeout(() => {
-      notification.classList.remove("show");
-      setTimeout(() => {
-        if (notification.parentNode) {
-          notification.remove();
+    const response = await fetch('https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        inputs: prompt,
+        parameters: {
+          max_new_tokens: 150,
+          temperature: 0.7,
+          return_full_text: false
         }
-      }, 300);
-    }, 3000);
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Hugging Face API Error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+
+    if (data.error) {
+      throw new Error(data.error);
+    }
+
+    if (Array.isArray(data) && data[0] && data[0].generated_text) {
+      return data[0].generated_text.replace(prompt, '').trim();
+    }
+
+    return 'Przepraszam, nie mogę teraz odpowiedzieć. Spróbuj ponownie.';
+  }
+
+  clearChat() {
+    if (confirm('Wyczyścić czat?')) {
+      this.messagesTarget.innerHTML = '';
+      conversationHistory = [];
+    }
   }
 }
 
-// Initialize the chatbot when the page loads
-document.addEventListener("DOMContentLoaded", () => {
-  new LanguageChatbot();
-});
+// Kontroler ulubionych
+class FavoritesController extends Controller {
+  static targets = ["list"]
+
+  connect() {
+    this.displayFavorites();
+  }
+
+  displayFavorites() {
+    if (favorites.length === 0) {
+      this.listTarget.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">⭐</div>
+          <h3>Brak ulubionych słówek</h3>
+          <p>Kliknij na słowo w rozmowie, aby dodać do ulubionych.</p>
+        </div>
+      `;
+      return;
+    }
+
+    this.listTarget.innerHTML = favorites.map(fav => `
+      <div class="favorite-item">
+        <div class="favorite-content">
+          <div class="favorite-word">${fav.word}</div>
+          <div class="favorite-translation">${fav.translation}</div>
+          <div class="favorite-context">${fav.context || ''}</div>
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="removeFavorite(${fav.id})">
+          🗑️ Usuń
+        </button>
+      </div>
+    `).join('');
+  }
+
+  clearAll() {
+    if (confirm('Usunąć wszystkie ulubione słówka?')) {
+      favorites = [];
+      this.displayFavorites();
+
+      // Odśwież fiszki
+      const flashController = application.getControllerForElementAndIdentifier(
+          document.querySelector('[data-controller="flashcards"]'),
+          'flashcards'
+      );
+      if (flashController) flashController.loadCards();
+    }
+  }
+}
+
+// Kontroler fiszek
+class FlashcardsController extends Controller {
+  static targets = ["empty", "card", "word", "translation", "current", "total"]
+
+  connect() {
+    this.loadCards();
+  }
+
+  loadCards() {
+    this.updateStats();
+
+    if (favorites.length === 0) {
+      this.emptyTarget.style.display = 'block';
+      this.cardTarget.style.display = 'none';
+      return;
+    }
+
+    this.emptyTarget.style.display = 'none';
+    this.cardTarget.style.display = 'block';
+    this.showCurrentCard();
+  }
+
+  updateStats() {
+    this.currentTarget.textContent = favorites.length > 0 ? currentCardIndex + 1 : 0;
+    this.totalTarget.textContent = favorites.length;
+  }
+
+  showCurrentCard() {
+    if (favorites.length === 0) {
+      this.loadCards();
+      return;
+    }
+
+    if (currentCardIndex >= favorites.length) {
+      currentCardIndex = 0;
+    }
+
+    const card = favorites[currentCardIndex];
+    this.wordTarget.textContent = card.word;
+    this.translationTarget.textContent = card.translation;
+    this.translationTarget.style.display = 'none';
+
+    // Resetuj widok karty
+    this.cardTarget.querySelector('.card-actions').style.display = 'none';
+    this.cardTarget.querySelector('.btn-primary').style.display = 'inline-flex';
+
+    this.updateStats();
+  }
+
+  showTranslation() {
+    this.translationTarget.style.display = 'block';
+    this.cardTarget.querySelector('.btn-primary').style.display = 'none';
+    this.cardTarget.querySelector('.card-actions').style.display = 'block';
+  }
+
+  nextCard() {
+    currentCardIndex++;
+    this.showCurrentCard();
+  }
+
+  previousCard() {
+    currentCardIndex = currentCardIndex > 0 ? currentCardIndex - 1 : favorites.length - 1;
+    this.showCurrentCard();
+  }
+}
+
+// Funkcje globalne
+window.showTranslation = function(word, event) {
+  event.preventDefault();
+  event.stopPropagation();
+
+  // Usuń istniejące popup
+  const existing = document.querySelector('.translation-popup');
+  if (existing) existing.remove();
+
+  // Stwórz nowy popup
+  const popup = document.createElement('div');
+  popup.className = 'translation-popup';
+  popup.innerHTML = `
+    <div><strong>${word}</strong></div>
+    <div class="popup-actions">
+      <button class="star-btn" onclick="addToFavorites('${word.replace(/'/g, "\\'")}')">
+        ⭐ Dodaj do ulubionych
+      </button>
+      <button class="translate-btn" onclick="translateWord('${word.replace(/'/g, "\\'")}')">
+        🔄 Przetłumacz
+      </button>
+    </div>
+  `;
+
+  // Pozycjonuj popup
+  const rect = event.target.getBoundingClientRect();
+  popup.style.left = Math.min(rect.left, window.innerWidth - 300) + 'px';
+  popup.style.top = (rect.bottom + 5) + 'px';
+
+  document.body.appendChild(popup);
+
+  // Usuń popup po kliknięciu gdzie indziej
+  setTimeout(() => {
+    document.addEventListener('click', function remove(e) {
+      if (!popup.contains(e.target)) {
+        popup.remove();
+        document.removeEventListener('click', remove);
+      }
+    });
+  }, 100);
+};
+
+window.translateWord = async function(word) {
+  if (!apiKey) return;
+
+  const popup = document.querySelector('.translation-popup');
+  if (popup) {
+    popup.innerHTML = `<div>Tłumaczę "${word}"...</div>`;
+  }
+
+  try {
+    let translation;
+    if (apiProvider === 'groq') {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: 'llama3-8b-8192',
+          messages: [
+            {
+              role: 'system',
+              content: 'Jesteś tłumaczem. Podaj tylko tłumaczenie słowa na język polski, bez dodatkowych wyjaśnień.'
+            },
+            {
+              role: 'user',
+              content: `Przetłumacz słowo: ${word}`
+            }
+          ],
+          max_tokens: 50,
+          temperature: 0.3
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        translation = data.choices[0].message.content.trim();
+      }
+    } else {
+      // Dla Hugging Face - prostsze tłumaczenie
+      const response = await fetch('https://api-inference.huggingface.co/models/Helsinki-NLP/opus-mt-en-pl', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          inputs: word
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data && data[0] && data[0].translation_text) {
+          translation = data[0].translation_text;
+        }
+      }
+    }
+
+    if (popup) {
+      popup.innerHTML = `
+        <div><strong>${word}</strong></div>
+        <div class="translation-result">${translation || 'Nie udało się przetłumaczyć'}</div>
+        <button class="star-btn" onclick="addToFavorites('${word.replace(/'/g, "\\'")}', '${translation ? translation.replace(/'/g, "\\'") : ''}')">
+          ⭐ Dodaj do ulubionych
+        </button>
+      `;
+    }
+  } catch (error) {
+    console.error('Translation error:', error);
+    if (popup) {
+      popup.innerHTML = `
+        <div><strong>${word}</strong></div>
+        <div>Błąd tłumaczenia</div>
+        <button class="star-btn" onclick="addToFavorites('${word.replace(/'/g, "\\'")}')">
+          ⭐ Dodaj do ulubionych
+        </button>
+      `;
+    }
+  }
+};
+
+window.addToFavorites = function(word, translation = null) {
+  // Sprawdź czy już istnieje
+  if (favorites.some(fav => fav.word.toLowerCase() === word.toLowerCase())) {
+    alert('Słowo już jest w ulubionych');
+    return;
+  }
+
+  if (!translation) {
+    translation = prompt(`Podaj tłumaczenie dla słowa "${word}":`);
+    if (!translation) return;
+  }
+
+  const favorite = {
+    id: Date.now(),
+    word: word,
+    translation: translation,
+    context: '',
+    addedAt: new Date().toISOString()
+  };
+
+  favorites.push(favorite);
+
+  // Usuń popup
+  const popup = document.querySelector('.translation-popup');
+  if (popup) popup.remove();
+
+  // Pokaż powiadomienie
+  showNotification(`Dodano "${word}" do ulubionych!`, 'success');
+
+  // Odśwież widoki
+  const appController = application.getControllerForElementAndIdentifier(
+      document.querySelector('[data-controller="application"]'),
+      'application'
+  );
+  if (appController) {
+    appController.refreshFavorites();
+    appController.refreshFlashcards();
+  }
+};
+
+window.removeFavorite = function(id) {
+  if (confirm('Usunąć to słówko z ulubionych?')) {
+    favorites = favorites.filter(fav => fav.id !== id);
+
+    // Dostosuj indeks karty jeśli trzeba
+    if (currentCardIndex >= favorites.length && favorites.length > 0) {
+      currentCardIndex = 0;
+    }
+
+    // Odśwież widoki
+    const appController = application.getControllerForElementAndIdentifier(
+        document.querySelector('[data-controller="application"]'),
+        'application'
+    );
+    if (appController) {
+      appController.refreshFavorites();
+      appController.refreshFlashcards();
+    }
+  }
+};
+
+// Funkcja powiadomień
+function showNotification(message, type = 'info') {
+  const notification = document.createElement('div');
+  notification.className = `notification ${type}`;
+  notification.textContent = message;
+
+  // Dodaj style CSS jako string
+  const style = document.createElement('style');
+  style.textContent = `
+    .notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      color: white;
+      padding: 1rem 1.5rem;
+      border-radius: 8px;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+      z-index: 1001;
+      font-family: Inter, sans-serif;
+      font-weight: 500;
+      animation: slideInRight 0.3s ease-out;
+    }
+    .notification.success {
+      background: #10b981;
+    }
+    .notification.info {
+      background: #3b82f6;
+    }
+    @keyframes slideInRight {
+      from {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+    @keyframes slideOutRight {
+      from {
+        transform: translateX(0);
+        opacity: 1;
+      }
+      to {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+    }
+  `;
+
+  if (!document.querySelector('#notification-styles')) {
+    style.id = 'notification-styles';
+    document.head.appendChild(style);
+  }
+
+  notification.style.background = type === 'success' ? '#10b981' : '#3b82f6';
+  document.body.appendChild(notification);
+
+  setTimeout(() => {
+    notification.style.animation = 'slideOutRight 0.3s ease-out';
+    setTimeout(() => notification.remove(), 300);
+  }, 3000);
+}
+
+// Rejestracja kontrolerów
+application.register('application', ApplicationController);
+application.register('api-setup', ApiSetupController);
+application.register('chat', ChatController);
+application.register('favorites', FavoritesController);
+application.register('flashcards', FlashcardsController);
+
+// Dodaj style dla popup i innych elementów
+const globalStyles = document.createElement('style');
+globalStyles.textContent = `
+  .translation-popup {
+    position: fixed;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+    padding: 1rem;
+    z-index: 1000;
+    max-width: 300px;
+    font-family: Inter, sans-serif;
+  }
+  
+  .popup-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+  
+  .star-btn, .translate-btn {
+    background: #3b82f6;
+    color: white;
+    border: none;
+    padding: 0.5rem 1rem;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: background-color 0.2s;
+  }
+  
+  .star-btn:hover, .translate-btn:hover {
+    background: #2563eb;
+  }
+  
+  .translation-result {
+    margin: 0.5rem 0;
+    font-style: italic;
+    color: #6b7280;
+  }
+  
+  .clickable-word {
+    cursor: pointer;
+    color: #3b82f6;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+  }
+  
+  .clickable-word:hover {
+    background: #eff6ff;
+  }
+`;
+document.head.appendChild(globalStyles);

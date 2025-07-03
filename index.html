@@ -4,27 +4,26 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Language Assistant</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
-<body>
+<body data-controller="application">
+
 <nav class="navbar">
   <div class="nav-brand">
     <span class="brand-icon">🗣️</span>
     <span class="brand-text">Language Assistant</span>
   </div>
   <div class="nav-tabs">
-    <button id="tab-chat" class="nav-tab active">
+    <button class="nav-tab active" data-action="click->application#switchTab" data-tab="chat">
       <span class="tab-icon">💬</span>
       <span class="tab-text">Czat</span>
     </button>
-    <button id="tab-favorites" class="nav-tab">
+    <button class="nav-tab" data-action="click->application#switchTab" data-tab="favorites">
       <span class="tab-icon">⭐</span>
       <span class="tab-text">Ulubione</span>
     </button>
-    <button id="tab-flashcards" class="nav-tab">
+    <button class="nav-tab" data-action="click->application#switchTab" data-tab="flashcards">
       <span class="tab-icon">🃏</span>
       <span class="tab-text">Fiszki</span>
     </button>
@@ -33,162 +32,108 @@
 
 <main class="main-content">
   <!-- Panel Czatu -->
-  <section id="panel-chat" class="panel panel-chat active" aria-label="Panel czatu">
+  <section id="panel-chat" class="panel active" data-controller="chat">
     <div class="chat-header">
       <h2>Rozmowa</h2>
-      <div class="chat-controls">
-        <button id="clear-chat" class="btn btn-secondary">Wyczyść czat</button>
-      </div>
+      <button class="btn btn-secondary" data-action="click->chat#clearChat">Wyczyść czat</button>
     </div>
 
-    <div id="messages" class="messages" aria-live="polite"></div>
+    <div data-chat-target="messages" class="messages"></div>
 
     <div class="input-area">
-      <div class="input-controls">
-        <div class="text-input-container">
-          <textarea id="text-input" placeholder="Wpisz wiadomość lub użyj mikrofonu..." rows="1"></textarea>
-          <button id="send-btn" class="btn btn-primary">
-            <span class="btn-icon">📤</span>
-          </button>
-        </div>
-        <div class="voice-controls">
-          <button id="mic-btn" class="mic-btn disabled" aria-label="Rozpocznij nagrywanie">
-            <span class="mic-icon">🎤</span>
-          </button>
-          <div id="status" class="status">Skonfiguruj API, aby rozpocząć</div>
-        </div>
-      </div>
-    </div>
-
-    <div id="loading" class="loading">
-      <div class="loading-spinner"></div>
-      <span>Ładowanie...</span>
-    </div>
-
-    <div id="api-setup" class="api-setup show">
-      <div class="api-setup-header">
-        <h3>Konfiguracja API</h3>
-        <p>Wybierz dostawcę API i wprowadź klucz</p>
-      </div>
-
-      <div class="api-provider-selection" style="margin-bottom: 1.5rem;">
-        <label style="display: block; margin-bottom: 0.5rem; font-weight: 500;">Dostawca API:</label>
-        <select id="api-provider" style="width: 100%; padding: 0.75rem; border: 1px solid var(--gray-300); border-radius: var(--radius); background: var(--white);">
-          <option value="huggingface">Hugging Face (darmowy)</option>
-          <option value="openai">OpenAI (płatny)</option>
-        </select>
-      </div>
-
-      <div class="api-input-group">
-        <input id="api-input" type="password" placeholder="Wklej tutaj swój klucz API..." aria-label="Klucz API" />
-        <button id="api-save-btn" class="btn btn-primary">Zapisz</button>
-      </div>
-
-      <div id="api-info-hf" class="api-info">
-        <p>📝 Jak uzyskać klucz Hugging Face API:</p>
-        <ol>
-          <li>Przejdź na <a href="https://huggingface.co/settings/tokens" target="_blank">huggingface.co/settings/tokens</a></li>
-          <li>Zaloguj się lub załóż darmowe konto</li>
-          <li>Kliknij "New token" i wybierz "Read"</li>
-          <li>Skopiuj wygenerowany klucz</li>
-        </ol>
-      </div>
-
-      <div id="api-info-openai" class="api-info" style="display: none;">
-        <p>📝 Jak uzyskać klucz OpenAI API:</p>
-        <ol>
-          <li>Przejdź na <a href="https://platform.openai.com/api-keys" target="_blank">platform.openai.com/api-keys</a></li>
-          <li>Zaloguj się do swojego konta OpenAI</li>
-          <li>Kliknij "Create new secret key"</li>
-          <li>Skopiuj wygenerowany klucz (zachowaj go bezpiecznie!)</li>
-        </ol>
-        <p style="color: var(--warning-color); font-size: 0.8rem; margin-top: 1rem;">⚠️ OpenAI API jest płatne. Sprawdź cennik przed użyciem.</p>
+      <div class="input-container">
+        <textarea data-chat-target="input" placeholder="Wpisz wiadomość..." rows="1"></textarea>
+        <button class="btn btn-primary" data-action="click->chat#sendMessage">Wyślij</button>
       </div>
     </div>
   </section>
 
   <!-- Panel Ulubionych -->
-  <section id="panel-favorites" class="panel panel-favorites" aria-label="Ulubione słówka">
+  <section id="panel-favorites" class="panel" data-controller="favorites">
     <div class="panel-header">
       <h2>Ulubione słówka</h2>
-      <div class="panel-controls">
-        <button id="export-favorites" class="btn btn-secondary">Eksportuj</button>
-        <button id="clear-favorites" class="btn btn-danger">Wyczyść wszystkie</button>
-      </div>
+      <button class="btn btn-danger" data-action="click->favorites#clearAll">Wyczyść</button>
     </div>
-    <div class="search-container">
-      <input id="favorites-search" type="text" placeholder="Szukaj w ulubionych..." class="search-input">
-    </div>
-    <div id="favorites-list" class="favorites-list">
+
+    <div data-favorites-target="list" class="favorites-list">
       <div class="empty-state">
         <div class="empty-icon">⭐</div>
         <h3>Brak ulubionych słówek</h3>
-        <p>Kliknij na dowolne słowo w rozmowie, aby dodać je do ulubionych.</p>
+        <p>Kliknij na słowo w rozmowie, aby dodać do ulubionych.</p>
       </div>
     </div>
   </section>
 
   <!-- Panel Fiszek -->
-  <section id="panel-flashcards" class="panel panel-flashcards" aria-label="Fiszki do nauki">
+  <section id="panel-flashcards" class="panel" data-controller="flashcards">
     <div class="panel-header">
       <h2>Fiszki</h2>
-      <div class="panel-controls">
-        <button id="shuffle-flashcards" class="btn btn-secondary">Tasuj</button>
-        <button id="reset-progress" class="btn btn-warning">Reset postępu</button>
+      <div class="stats">
+        <span>Aktualna: <span data-flashcards-target="current">0</span></span>
+        <span>Wszystkich: <span data-flashcards-target="total">0</span></span>
       </div>
     </div>
 
     <div class="flashcard-container">
-      <div class="flashcard-stats">
-        <div class="stat">
-          <span class="stat-label">Aktualna</span>
-          <span id="current-card" class="stat-value">0</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">Wszystkich</span>
-          <span id="total-cards" class="stat-value">0</span>
-        </div>
-        <div class="stat">
-          <span class="stat-label">Poprawne</span>
-          <span id="correct-answers" class="stat-value">0</span>
-        </div>
+      <div data-flashcards-target="empty" class="empty-state">
+        <div class="empty-icon">🃏</div>
+        <h3>Brak fiszek</h3>
+        <p>Dodaj słówka do ulubionych, aby rozpocząć naukę.</p>
       </div>
 
-      <div id="flashcard-content">
-        <div id="flashcard-empty" class="flashcard-empty">
-          <div class="empty-icon">🃏</div>
-          <h3>Brak fiszek</h3>
-          <p>Dodaj słówka do ulubionych, aby móc się ich uczyć za pomocą fiszek.</p>
-          <button id="go-to-chat" class="btn btn-primary">Przejdź do czatu</button>
+      <div data-flashcards-target="card" class="flashcard" style="display: none;">
+        <div class="card-content">
+          <div data-flashcards-target="word" class="card-word"></div>
+          <div data-flashcards-target="translation" class="card-translation" style="display: none;"></div>
+          <button class="btn btn-primary" data-action="click->flashcards#showTranslation">Pokaż tłumaczenie</button>
         </div>
-
-        <div id="flashcard" class="flashcard" style="display: none;">
-          <div class="flashcard-inner">
-            <div class="flashcard-front">
-              <div class="card-content">
-                <div id="card-word" class="card-word"></div>
-                <div class="card-hint">Kliknij, aby zobaczyć tłumaczenie</div>
-              </div>
-            </div>
-            <div class="flashcard-back">
-              <div class="card-content">
-                <div id="card-translation" class="card-translation"></div>
-                <div class="card-hint">Jak dobrze znasz to słowo?</div>
-              </div>
-            </div>
-          </div>
+        <div class="card-actions" style="display: none;">
+          <button class="btn btn-success" data-action="click->flashcards#nextCard">Następna</button>
         </div>
-      </div>
-
-      <div id="card-actions" class="card-actions" style="display: none;">
-        <button id="know-it" class="btn btn-success">Znam dobrze</button>
-        <button id="learning" class="btn btn-warning">Uczę się</button>
-        <button id="dont-know" class="btn btn-danger">Nie znam</button>
       </div>
     </div>
   </section>
 </main>
 
-<script type="module" src="script.js"></script>
+<!-- API Setup Modal -->
+<div id="api-setup" class="api-setup show" data-controller="api-setup">
+  <div class="api-setup-content">
+    <h3>Konfiguracja API</h3>
+    <p>Wybierz dostawcę API i wprowadź klucz:</p>
+    <div class="api-input-group">
+      <select data-api-setup-target="provider" class="provider-select">
+        <option value="groq">Groq (Szybkie, darmowe)</option>
+        <option value="huggingface">Hugging Face (Darmowe)</option>
+      </select>
+      <input data-api-setup-target="input" type="password" placeholder="gsk_..." />
+      <button class="btn btn-primary" data-action="click->api-setup#save">Zapisz</button>
+    </div>
+    <div class="api-info">
+      <div class="api-provider-info">
+        <h4>🚀 Groq (Polecane)</h4>
+        <p>Szybkie, darmowe API z limitami wystarczającymi do nauki.</p>
+        <ol>
+          <li>Wejdź na <a href="https://console.groq.com/keys" target="_blank">console.groq.com</a></li>
+          <li>Zaloguj się i wygeneruj klucz API</li>
+          <li>Wklej klucz zaczynający się od "gsk_"</li>
+        </ol>
+      </div>
+      <div class="api-provider-info">
+        <h4>🤗 Hugging Face</h4>
+        <p>Darmowe API z modelami AI open-source.</p>
+        <ol>
+          <li>Wejdź na <a href="https://huggingface.co/settings/tokens" target="_blank">huggingface.co/settings/tokens</a></li>
+          <li>Zaloguj się i wygeneruj token</li>
+          <li>Wklej token zaczynający się od "hf_"</li>
+        </ol>
+      </div>
+      <p><strong>Uwaga:</strong> Klucz jest przechowywany tylko w przeglądarce podczas sesji.</p>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/@hotwired/stimulus/dist/stimulus.umd.js"></script>
+<script src="script.js"></script>
+
 </body>
 </html>
